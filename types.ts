@@ -51,6 +51,7 @@ export interface Task {
   baselineEnd?: string;
   isExpanded?: boolean;
   isCritical?: boolean;
+  isAtRisk?: boolean; // New manual risk flag
   jiraId?: string;
   jiraType?: 'PF' | 'EPIC' | 'STORY' | 'TASK';
 }

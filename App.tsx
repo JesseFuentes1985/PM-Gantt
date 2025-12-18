@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
-import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays } from './utils/ganttLogic';
+import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
@@ -24,6 +24,7 @@ const INITIAL_TASKS: Task[] = [
     dependencies: [],
     isMilestone: false,
     isExpanded: true,
+    isAtRisk: false,
     jiraType: 'PF',
     jiraId: 'PLAT-101'
   },
@@ -41,6 +42,7 @@ const INITIAL_TASKS: Task[] = [
     role: 'Analyst',
     dependencies: [],
     isMilestone: false,
+    isAtRisk: false,
     jiraType: 'EPIC',
     jiraId: 'PLAT-102'
   },
@@ -58,6 +60,7 @@ const INITIAL_TASKS: Task[] = [
     role: 'Lead Strategist',
     dependencies: [{ predecessorId: 'EP-1.1', type: 'Finish-to-Start' as any, lagDays: 0 }],
     isMilestone: true,
+    isAtRisk: false,
     jiraType: 'EPIC',
     jiraId: 'PLAT-103'
   },
@@ -76,6 +79,7 @@ const INITIAL_TASKS: Task[] = [
     dependencies: [{ predecessorId: 'PF-1', type: 'Finish-to-Start' as any, lagDays: 0 }],
     isMilestone: false,
     isExpanded: true,
+    isAtRisk: false,
     jiraType: 'PF',
     jiraId: 'MOB-201'
   },
@@ -93,6 +97,7 @@ const INITIAL_TASKS: Task[] = [
     role: 'Lead Developer',
     dependencies: [],
     isMilestone: false,
+    isAtRisk: false,
     jiraType: 'EPIC',
     jiraId: 'MOB-202'
   },
@@ -110,6 +115,7 @@ const INITIAL_TASKS: Task[] = [
     role: 'Backend Dev',
     dependencies: [{ predecessorId: 'EP-2.1', type: 'Finish-to-Start' as any, lagDays: 0 }],
     isMilestone: false,
+    isAtRisk: true,
     jiraType: 'EPIC',
     jiraId: 'MOB-203'
   }
@@ -127,15 +133,33 @@ const App: React.FC = () => {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
 
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    const saved = localStorage.getItem('gantt_left_panel_width');
+    return saved ? parseInt(saved, 10) : 800;
+  });
+  const isResizing = useRef(false);
+
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
 
+  // Progressive Collapse Visualization
+  const isSummaryMode = leftPanelWidth < 380;
+  const isVerticalHeader = leftPanelWidth < 650;
+  
+  const columnVisibility = useMemo(() => ({
+    rag: leftPanelWidth > 1100,
+    done: leftPanelWidth > 1000,
+    owner: leftPanelWidth > 850,
+    atRisk: leftPanelWidth > 780, // New visibility threshold
+    status: leftPanelWidth > 680,
+    pred: leftPanelWidth > 600,
+    duration: leftPanelWidth > 520,
+    dates: leftPanelWidth > 420,
+  }), [leftPanelWidth]);
+
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (isDarkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
   useEffect(() => {
@@ -145,10 +169,23 @@ const App: React.FC = () => {
   const visibleTasksData = useMemo(() => getVisibleTasks(tasks), [tasks]);
   const visibleTasks = useMemo(() => visibleTasksData.map(v => v.task), [visibleTasksData]);
 
+  const hierarchyToIdMap = useMemo(() => {
+    const map = new Map<string, string>();
+    visibleTasksData.forEach(v => map.set(v.hierarchyId, v.task.id));
+    return map;
+  }, [visibleTasksData]);
+
+  const idToHierarchyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    visibleTasksData.forEach(v => map.set(v.task.id, v.hierarchyId));
+    return map;
+  }, [visibleTasksData]);
+
   const stats: ProjectStats = useMemo(() => {
     const total = tasks.length;
     const completed = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-    const atRisk = tasks.filter(t => t.rag === RAGStatus.RED).length;
+    // Count both RAG Red and manual Risk flag
+    const atRisk = tasks.filter(t => t.rag === RAGStatus.RED || t.isAtRisk).length;
     const totalDur = tasks.reduce((acc, t) => acc + t.duration, 0);
     const avg = totalDur > 0 ? tasks.reduce((acc, t) => acc + (t.progress * t.duration), 0) / totalDur : 0;
     return {
@@ -166,8 +203,7 @@ const App: React.FC = () => {
       if (taskIndex === -1) return prev;
       const newTasks = [...prev];
       newTasks[taskIndex] = { ...newTasks[taskIndex], ...updates };
-      
-      if (updates.startDate || updates.endDate || updates.duration) {
+      if (updates.startDate || updates.endDate || updates.duration || updates.dependencies || updates.status) {
         return identifyCriticalPath(propagateChanges(newTasks, id));
       }
       return identifyCriticalPath(rollupHierarchy(newTasks));
@@ -222,9 +258,7 @@ const App: React.FC = () => {
     const sourceId = draggedTaskId;
     setDraggedTaskId(null);
     setDragTargetId(null);
-
     if (!sourceId || sourceId === targetId) return;
-
     setTasks(prev => {
       const groupToMoveIds = new Set<string>();
       const collectDescendants = (id: string) => {
@@ -232,20 +266,14 @@ const App: React.FC = () => {
         prev.filter(t => t.parentId === id).forEach(child => collectDescendants(child.id));
       };
       collectDescendants(sourceId);
-
       if (groupToMoveIds.has(targetId)) return prev;
-
       const itemsToMove = prev.filter(t => groupToMoveIds.has(t.id));
       const remainingItems = prev.filter(t => !groupToMoveIds.has(t.id));
-      
       const targetIndex = remainingItems.findIndex(t => t.id === targetId);
       if (targetIndex === -1) return prev;
-
       const lastDescendantIdx = findLastDescendantIndex(targetId, remainingItems);
-      
       const newTasks = [...remainingItems];
       newTasks.splice(lastDescendantIdx + 1, 0, ...itemsToMove);
-
       return identifyCriticalPath(rollupHierarchy(newTasks));
     });
   };
@@ -253,24 +281,23 @@ const App: React.FC = () => {
   const handleAIDecompose = async (task: Task) => {
     setLoading(true);
     try {
-      const isPF = !task.parentId;
-      const targetLabel = isPF ? "Epics" : "Subtasks";
-      const breakdown = await getAITaskBreakdown(task.name, `Generate a logical ${targetLabel} structure to complete this ${task.jiraType || 'item'}.`);
-      
+      const breakdown = await getAITaskBreakdown(task.name, "Breakdown this project component into logical sub-elements following hierarchy.");
       let newTasksToAdd: Task[] = [];
       let currentStartDate = task.startDate;
+      breakdown.forEach((item: any) => {
+        let childType: 'PF' | 'EPIC' | 'TASK' | 'STORY' = 'TASK';
+        if (task.jiraType === 'PF') childType = 'EPIC';
+        else if (task.jiraType === 'EPIC') childType = 'TASK';
+        else if (task.jiraType === 'TASK') childType = 'STORY';
+        else childType = 'STORY';
 
-      breakdown.forEach((item: any, i: number) => {
-        const subTask = createNewTask(task.id, currentStartDate);
-        subTask.name = isPF ? `EPIC: ${item.name}` : item.name;
-        subTask.jiraType = isPF ? 'EPIC' : 'STORY';
-        subTask.jiraId = `JIRA-${Math.floor(Math.random() * 9000) + 1000}`;
+        const subTask = createNewTask(task.id, currentStartDate, childType);
+        subTask.name = item.name;
         subTask.duration = item.duration || 3;
         subTask.endDate = getEndDateFromDuration(currentStartDate, subTask.duration);
         newTasksToAdd.push(subTask);
         currentStartDate = addDays(subTask.endDate, 1);
       });
-
       setTasks(prev => {
         const newTasks = [...prev];
         const insertIndex = findLastDescendantIndex(task.id, prev) + 1;
@@ -278,19 +305,45 @@ const App: React.FC = () => {
         return identifyCriticalPath(rollupHierarchy(newTasks));
       });
       handleUpdateTask(task.id, { isExpanded: true });
-    } catch (error) {
-      console.error("AI breakdown failed", error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { console.error(error); } finally { setLoading(false); }
   };
 
-  const handleJiraSync = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      alert("Successfully synced with Jira Cloud. Updated 4 PFs and 12 Epics.");
-    }, 1500);
+  const handleAddTask = (targetId: string | null = null, asChild: boolean = false, forceRoot: boolean = false) => {
+    let parentId: string | null = null;
+    let insertIndex = tasks.length;
+    let typeToCreate: 'PF' | 'EPIC' | 'TASK' | 'STORY' = 'PF';
+
+    if (forceRoot) {
+      parentId = null;
+      insertIndex = tasks.length;
+      typeToCreate = 'PF';
+    } else {
+      const contextId = targetId || selectedTaskId;
+      if (contextId) {
+        const targetTask = tasks.find(t => t.id === contextId);
+        if (asChild) {
+          parentId = contextId;
+          insertIndex = findLastDescendantIndex(contextId, tasks) + 1;
+          handleUpdateTask(contextId, { isExpanded: true });
+          if (targetTask?.jiraType === 'PF') typeToCreate = 'EPIC';
+          else if (targetTask?.jiraType === 'EPIC') typeToCreate = 'TASK';
+          else if (targetTask?.jiraType === 'TASK') typeToCreate = 'STORY';
+          else typeToCreate = 'STORY';
+        } else {
+          parentId = targetTask?.parentId || null;
+          insertIndex = findLastDescendantIndex(contextId, tasks) + 1;
+          typeToCreate = targetTask?.jiraType || 'PF';
+        }
+      }
+    }
+
+    const newT = createNewTask(parentId, tasks[0]?.startDate || new Date().toISOString().split('T')[0], typeToCreate);
+    setTasks(prev => {
+      const newTasks = [...prev];
+      newTasks.splice(insertIndex, 0, newT);
+      return identifyCriticalPath(rollupHierarchy(newTasks));
+    });
+    setSelectedTaskId(newT.id);
   };
 
   const handleAIAnalysis = async () => {
@@ -300,57 +353,49 @@ const App: React.FC = () => {
       setAiInsights(insights);
       setShowAI(true);
     } catch (error) {
-      console.error("AI project analysis failed", error);
+      console.error("AI Analysis failed:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddTask = (targetId: string | null = null, asChild: boolean = false, forceRoot: boolean = false) => {
-    let parentId: string | null = null;
-    let insertIndex = tasks.length;
-    const contextId = forceRoot ? null : (targetId || selectedTaskId);
-
-    if (contextId) {
-      if (asChild) {
-        parentId = contextId;
-        insertIndex = findLastDescendantIndex(contextId, tasks) + 1;
-        handleUpdateTask(contextId, { isExpanded: true });
-      } else {
-        const targetTask = tasks.find(t => t.id === contextId);
-        parentId = targetTask?.parentId || null;
-        insertIndex = findLastDescendantIndex(contextId, tasks) + 1;
-      }
-    }
-
-    const newT = createNewTask(parentId, tasks[0]?.startDate || '2023-11-01');
-    const isRoot = !parentId;
-    newT.jiraType = isRoot ? 'PF' : (tasks.find(t => t.id === parentId)?.jiraType === 'PF' ? 'EPIC' : 'STORY');
-    newT.name = isRoot ? `PF-${tasks.filter(t => !t.parentId).length + 1}: New Feature` : `EPIC: New Sub-work`;
-    
-    setTasks(prev => {
-      const newTasks = [...prev];
-      newTasks.splice(insertIndex, 0, newT);
-      return identifyCriticalPath(rollupHierarchy(newTasks));
-    });
-    setSelectedTaskId(newT.id);
-  };
-
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
-    if (target === leftPaneRef.current && rightPaneRef.current) {
-      rightPaneRef.current.scrollTop = target.scrollTop;
-    } else if (target === rightPaneRef.current && leftPaneRef.current) {
-      leftPaneRef.current.scrollTop = target.scrollTop;
-    }
+    if (target === leftPaneRef.current && rightPaneRef.current) rightPaneRef.current.scrollTop = target.scrollTop;
+    else if (target === rightPaneRef.current && leftPaneRef.current) leftPaneRef.current.scrollTop = target.scrollTop;
   };
 
+  const handleResize = useCallback((e: MouseEvent) => {
+    if (!isResizing.current) return;
+    const newWidth = Math.min(Math.max(100, e.clientX), window.innerWidth - 100);
+    setLeftPanelWidth(newWidth);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    isResizing.current = false;
+    document.removeEventListener('mousemove', handleResize);
+    document.removeEventListener('mouseup', stopResizing);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem('gantt_left_panel_width', leftPanelWidth.toString());
+  }, [handleResize, leftPanelWidth]);
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    isResizing.current = true;
+    document.addEventListener('mousemove', handleResize);
+    document.addEventListener('mouseup', stopResizing);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [handleResize, stopResizing]);
+
+  const headerLabelClass = isVerticalHeader ? "writing-vertical-rl rotate-180 h-10 w-full flex items-center justify-center pt-2" : "w-full text-center p-2";
+
   return (
-    <div className={`flex flex-col h-screen overflow-hidden selection:bg-blue-100 transition-colors duration-200 ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-white text-gray-900'}`}>
+    <div className={`flex flex-col h-screen overflow-hidden ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-white text-gray-900'}`}>
       <DashboardHeader 
         stats={stats} 
         onAIAnalysis={handleAIAnalysis} 
-        onJiraSync={handleJiraSync}
+        onJiraSync={() => alert('Jira Sync complete!')}
         isLoading={loading} 
         onAddTask={() => handleAddTask(null, false, true)} 
         isDarkMode={isDarkMode}
@@ -360,79 +405,100 @@ const App: React.FC = () => {
         zoomLevel={zoomLevel}
         onZoomChange={setZoomLevel}
       />
-      
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
-        <div className="flex w-full overflow-hidden">
-          <div className="w-[930px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
-            <div className="flex bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800 text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider h-[63px] items-end pb-2 sticky top-0 z-30">
-              <div className="w-8 flex items-center justify-center"></div>
-              <div className="w-12 p-2 text-center shrink-0">#</div>
-              <div className="flex-1 p-2 min-w-0">Jira Task Name</div>
-              <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
-              <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
-              <div className="w-16 p-2 border-l border-gray-100 dark:border-slate-800 text-center">Dur.</div>
-              <div className="w-20 p-2 border-l border-gray-100 dark:border-slate-800">Owner</div>
-              <div className="w-14 p-2 border-l border-gray-100 dark:border-slate-800 text-right">Done</div>
-              <div className="w-10 p-2 border-l border-gray-100 dark:border-slate-800 text-center">RAG</div>
+        <div className="flex w-full overflow-hidden relative">
+          
+          {/* Side-by-Side Left Panel */}
+          <div 
+            className="flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm relative overflow-hidden"
+            style={{ width: leftPanelWidth }}
+          >
+            <div className="flex bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800 text-[10px] font-bold text-gray-400 dark:text-slate-500 uppercase tracking-widest h-[63px] items-end pb-2 sticky top-0 z-30">
+              <div className="w-8 shrink-0 flex items-center justify-center"></div>
+              {!isSummaryMode && <div className="w-10 p-2 text-center shrink-0">#</div>}
+              <div className="flex-1 p-2 min-w-0">Task</div>
+              
+              {!isSummaryMode && (
+                <>
+                  {columnVisibility.dates && (
+                    <>
+                      <div className="w-[110px] shrink-0 border-l dark:border-slate-800 flex items-end">
+                        <span className={headerLabelClass}>Start</span>
+                      </div>
+                      <div className="w-[110px] shrink-0 border-l dark:border-slate-800 flex items-end">
+                        <span className={headerLabelClass}>End</span>
+                      </div>
+                    </>
+                  )}
+                  {columnVisibility.duration && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Dur.</span></div>}
+                  {columnVisibility.pred && <div className="w-20 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Pred.</span></div>}
+                  {columnVisibility.status && <div className="w-32 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Status</span></div>}
+                  {columnVisibility.owner && <div className="w-24 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Owner</span></div>}
+                  {columnVisibility.atRisk && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Risk</span></div>}
+                  {columnVisibility.done && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Done</span></div>}
+                  {columnVisibility.rag && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>RAG</span></div>}
+                </>
+              )}
+              {isSummaryMode && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className="writing-vertical-rl rotate-180 h-10 w-full flex items-center justify-center pt-2">STATUS</span></div>}
             </div>
-            <div 
-              ref={leftPaneRef} 
-              onScroll={onScroll}
-              className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white dark:bg-slate-900 transition-colors"
-            >
-              {visibleTasksData.map(({ task, hierarchyId }) => (
-                <TaskRow 
-                  key={task.id} 
-                  task={task} 
-                  hierarchyId={hierarchyId}
-                  isSelected={selectedTaskId === task.id}
-                  allTasks={tasks}
-                  onSelect={() => setSelectedTaskId(task.id)}
-                  onToggle={() => handleUpdateTask(task.id, { isExpanded: !task.isExpanded })}
-                  onUpdate={(updates) => handleUpdateTask(task.id, updates)}
-                  onAIDecompose={() => handleAIDecompose(task)}
-                  onAddSubtask={() => handleAddTask(task.id, true)}
-                  onRemoveTask={() => handleRemoveTask(task.id)}
-                  onDragStart={handleDragStart}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                  isDragging={draggedTaskId === task.id}
-                  isDragTarget={dragTargetId === task.id}
-                />
-              ))}
-              <div 
-                className="p-3 flex items-center gap-2 text-gray-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50/30 dark:hover:bg-blue-900/10 cursor-pointer text-xs font-semibold h-[36px] border-b border-dashed dark:border-slate-800" 
-                onClick={() => handleAddTask(null, false, true)}
-              >
-                <i className="fas fa-plus-circle ml-8"></i> Add Feature (PF)
+            
+            <div ref={leftPaneRef} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white dark:bg-slate-900">
+              <div className="w-full">
+                {visibleTasksData.map(({ task, hierarchyId }, index) => (
+                  <TaskRow 
+                    key={task.id} 
+                    task={task} 
+                    hierarchyId={hierarchyId}
+                    index={index}
+                    isSelected={selectedTaskId === task.id}
+                    allTasks={tasks}
+                    hierarchyToIdMap={hierarchyToIdMap}
+                    idToHierarchyMap={idToHierarchyMap}
+                    onSelect={() => setSelectedTaskId(task.id)}
+                    onToggle={() => handleUpdateTask(task.id, { isExpanded: !task.isExpanded })}
+                    onUpdate={(updates) => handleUpdateTask(task.id, updates)}
+                    onAIDecompose={() => handleAIDecompose(task)}
+                    onAddSubtask={() => handleAddTask(task.id, true)}
+                    onRemoveTask={() => handleRemoveTask(task.id)}
+                    onDragStart={handleDragStart}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    isDragging={draggedTaskId === task.id}
+                    isDragTarget={dragTargetId === task.id}
+                    columnVisibility={columnVisibility}
+                    isSummaryMode={isSummaryMode}
+                    isDarkMode={isDarkMode}
+                  />
+                ))}
+                {!isSummaryMode && (
+                   <div className={`p-3 flex items-center gap-2 text-gray-300 dark:text-slate-600 hover:text-blue-600 hover:bg-blue-50/20 dark:hover:bg-blue-900/10 cursor-pointer text-xs font-bold h-[36px] border-b border-dashed dark:border-slate-800 ${visibleTasksData.length % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/50 dark:bg-slate-900/40'}`} onClick={() => handleAddTask(null, false, true)}>
+                    <i className="fas fa-plus-circle ml-8"></i> Add Feature (PF)
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
+          {/* Draggable Split Divider */}
           <div 
-            ref={rightPaneRef} 
-            onScroll={onScroll}
-            className="flex-1 overflow-auto bg-gray-50 dark:bg-slate-950 relative custom-scrollbar transition-colors"
+            onMouseDown={startResizing}
+            className="w-1 h-full cursor-col-resize bg-gray-200 dark:bg-slate-800 hover:bg-blue-500 active:bg-blue-600 transition-colors z-40 flex-shrink-0 relative group"
           >
-            <Timeline 
-              tasks={visibleTasks} 
-              onTaskUpdate={handleUpdateTask} 
-              isDarkMode={isDarkMode} 
-              showCriticalPath={showCriticalPath}
-              zoomLevel={zoomLevel}
-            />
+             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-8 bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-md shadow-sm hidden group-hover:flex items-center justify-center text-[10px] text-gray-400">
+                <i className="fas fa-grip-vertical"></i>
+             </div>
+          </div>
+
+          {/* Timeline Panel - Responds to remaining space via flex-1 */}
+          <div ref={rightPaneRef} onScroll={onScroll} className="flex-1 min-w-0 overflow-auto bg-white dark:bg-slate-950 relative custom-scrollbar">
+            <Timeline tasks={visibleTasks} onTaskUpdate={handleUpdateTask} isDarkMode={isDarkMode} showCriticalPath={showCriticalPath} zoomLevel={zoomLevel} />
           </div>
         </div>
       </div>
-
       {showAI && aiInsights && <AIAssistant insights={aiInsights} onClose={() => setShowAI(false)} isDarkMode={isDarkMode} />}
-
       {loading && (
         <div className="fixed inset-0 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100]">
-          <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 flex flex-col items-center gap-4">
-            <div className="h-12 w-12 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
-            <p className="text-gray-900 dark:text-slate-100 font-bold">Processing Schedule...</p>
-          </div>
+          <div className="h-10 w-10 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
         </div>
       )}
     </div>

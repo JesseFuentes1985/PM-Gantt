@@ -59,11 +59,9 @@ const Timeline: React.FC<TimelineProps> = ({
   const months = useMemo(() => {
     const groups: { label: string; daysCount: number }[] = [];
     if (days.length === 0) return groups;
-
     let currentMonth = days[0].getMonth();
     let currentYear = days[0].getFullYear();
     let count = 0;
-
     days.forEach((day, i) => {
       if (day.getMonth() !== currentMonth || day.getFullYear() !== currentYear) {
         groups.push({
@@ -73,10 +71,7 @@ const Timeline: React.FC<TimelineProps> = ({
         currentMonth = day.getMonth();
         currentYear = day.getFullYear();
         count = 1;
-      } else {
-        count++;
-      }
-
+      } else count++;
       if (i === days.length - 1) {
         groups.push({
           label: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(currentYear, currentMonth)),
@@ -104,25 +99,12 @@ const Timeline: React.FC<TimelineProps> = ({
     }
   };
 
-  const getStatusIcon = (status: TaskStatus) => {
-    switch (status) {
-      case TaskStatus.COMPLETED: return 'fa-check';
-      case TaskStatus.IN_PROGRESS: return 'fa-spinner fa-spin';
-      case TaskStatus.ON_HOLD: return 'fa-pause';
-      case TaskStatus.BLOCKED: return 'fa-ban';
-      case TaskStatus.NOT_STARTED: return 'fa-clock';
-      default: return '';
-    }
-  };
-
   const handleMouseDown = (e: React.MouseEvent, taskId: string, type: 'move' | 'resize') => {
     e.stopPropagation();
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
-    
     const hasChildren = tasks.some(t => t.parentId === taskId);
     if (hasChildren) return;
-
     setDragState({
       id: taskId,
       type,
@@ -137,31 +119,21 @@ const Timeline: React.FC<TimelineProps> = ({
       if (!dragState) return;
       const deltaX = e.clientX - dragState.initialX;
       const deltaDays = Math.round(deltaX / PIXELS_PER_DAY);
-      
       const task = tasks.find(t => t.id === dragState.id);
       if (!task) return;
-
       if (dragState.type === 'move') {
         const newStart = addDays(dragState.initialStart, deltaDays);
         if (newStart !== task.startDate) {
-          onTaskUpdate(task.id, { 
-            startDate: newStart, 
-            endDate: getEndDateFromDuration(newStart, task.duration) 
-          });
+          onTaskUpdate(task.id, { startDate: newStart, endDate: getEndDateFromDuration(newStart, task.duration) });
         }
       } else {
         const newDur = Math.max(1, dragState.initialDur + deltaDays);
         if (newDur !== task.duration) {
-          onTaskUpdate(task.id, { 
-            duration: newDur, 
-            endDate: getEndDateFromDuration(task.startDate, newDur)
-          });
+          onTaskUpdate(task.id, { duration: newDur, endDate: getEndDateFromDuration(task.startDate, newDur) });
         }
       }
     };
-
     const handleMouseUp = () => setDragState(null);
-
     if (dragState) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
@@ -177,11 +149,7 @@ const Timeline: React.FC<TimelineProps> = ({
       <div className="sticky top-0 z-20 bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800">
         <div className="flex border-b dark:border-slate-800" style={{ height: HEADER_HEIGHT_MONTH }}>
           {months.map((m, i) => (
-            <div 
-              key={i} 
-              className="flex-shrink-0 border-r dark:border-slate-800 text-[10px] font-bold text-blue-800 dark:text-blue-400 flex items-center px-3 uppercase tracking-widest bg-blue-50/40 dark:bg-blue-900/10 whitespace-nowrap overflow-hidden"
-              style={{ width: m.daysCount * PIXELS_PER_DAY }}
-            >
+            <div key={i} className="flex-shrink-0 border-r dark:border-slate-800 text-[10px] font-bold text-blue-800 dark:text-blue-400 flex items-center px-3 uppercase tracking-widest bg-blue-50/40 dark:bg-blue-900/10 whitespace-nowrap overflow-hidden" style={{ width: m.daysCount * PIXELS_PER_DAY }}>
               {m.label}
             </div>
           ))}
@@ -192,21 +160,9 @@ const Timeline: React.FC<TimelineProps> = ({
             const isToday = new Date().toISOString().split('T')[0] === day.toISOString().split('T')[0];
             const isMon = day.getDay() === 1;
             const isFirstOfMonth = day.getDate() === 1;
-
-            // Frequency for showing labels
-            let shouldShowLabel = false;
-            if (zoomLevel === ZoomLevel.DAYS) shouldShowLabel = true;
-            else if (zoomLevel === ZoomLevel.WEEKS) shouldShowLabel = isMon;
-            else if (zoomLevel === ZoomLevel.MONTHS) shouldShowLabel = isFirstOfMonth;
-
+            let shouldShowLabel = zoomLevel === ZoomLevel.DAYS || (zoomLevel === ZoomLevel.WEEKS && isMon) || (zoomLevel === ZoomLevel.MONTHS && isFirstOfMonth);
             return (
-              <div 
-                key={i} 
-                className={`flex-shrink-0 border-r dark:border-slate-800 text-[9px] flex flex-col items-center justify-center transition-colors 
-                  ${isWeekend ? 'bg-gray-100/40 dark:bg-slate-800/40' : ''} 
-                  ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/30' : ''}`} 
-                style={{ width: PIXELS_PER_DAY }}
-              >
+              <div key={i} className={`flex-shrink-0 border-r dark:border-slate-800 text-[9px] flex flex-col items-center justify-center transition-colors ${isWeekend ? 'bg-gray-100/40 dark:bg-slate-800/40' : ''} ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/30' : ''}`} style={{ width: PIXELS_PER_DAY }}>
                 {shouldShowLabel && (
                   <>
                     <span className={`font-bold leading-tight ${isMon || isFirstOfMonth ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-slate-500'}`}>
@@ -228,16 +184,9 @@ const Timeline: React.FC<TimelineProps> = ({
           {days.map((day, i) => {
              const isMon = day.getDay() === 1;
              const isFirst = day.getDate() === 1;
-             let showLine = zoomLevel === ZoomLevel.DAYS;
-             if (zoomLevel === ZoomLevel.WEEKS) showLine = isMon;
-             if (zoomLevel === ZoomLevel.MONTHS) showLine = isFirst;
-
+             let showLine = zoomLevel === ZoomLevel.DAYS || (zoomLevel === ZoomLevel.WEEKS && isMon) || (zoomLevel === ZoomLevel.MONTHS && isFirst);
              return (
-              <div 
-                key={i} 
-                className={`${showLine ? 'border-r dark:border-slate-800' : ''} h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/20 dark:bg-slate-800/10' : ''}`} 
-                style={{ width: PIXELS_PER_DAY }}
-              />
+              <div key={i} className={`${showLine ? 'border-r dark:border-slate-800' : ''} h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/20 dark:bg-slate-800/10' : ''}`} style={{ width: PIXELS_PER_DAY }} />
             );
           })}
         </div>
@@ -247,35 +196,37 @@ const Timeline: React.FC<TimelineProps> = ({
             task.dependencies.map((dep) => {
               const pred = tasks.find(t => t.id === dep.predecessorId);
               if (!pred) return null;
-              
-              const predHasChildren = tasks.some(t => t.parentId === pred.id);
-              const taskHasChildren = tasks.some(t => t.parentId === task.id);
-              if (predHasChildren || taskHasChildren) return null;
-
               const predIdx = tasks.indexOf(pred);
               if (predIdx === -1) return null;
 
-              const x1 = getOffset(pred.endDate) + PIXELS_PER_DAY;
-              const y1 = predIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
-              const x2 = getOffset(task.startDate);
-              const y2 = idx * ROW_HEIGHT + ROW_HEIGHT / 2;
+              let x1 = 0, y1 = predIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
+              let x2 = 0, y2 = idx * ROW_HEIGHT + ROW_HEIGHT / 2;
+
+              if (dep.type === DependencyType.FS) {
+                x1 = getOffset(pred.endDate) + PIXELS_PER_DAY;
+                x2 = getOffset(task.startDate);
+              } else if (dep.type === DependencyType.SS) {
+                x1 = getOffset(pred.startDate);
+                x2 = getOffset(task.startDate);
+              } else if (dep.type === DependencyType.FF) {
+                x1 = getOffset(pred.endDate) + PIXELS_PER_DAY;
+                x2 = getOffset(task.endDate) + PIXELS_PER_DAY;
+              } else if (dep.type === DependencyType.SF) {
+                x1 = getOffset(pred.startDate);
+                x2 = getOffset(task.endDate) + PIXELS_PER_DAY;
+              }
 
               const isLineCritical = showCriticalPath && task.isCritical && pred.isCritical;
+              const color = isLineCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8');
+
+              const path = dep.type === DependencyType.FS 
+                ? `M ${x1} ${y1} L ${x1+5} ${y1} L ${x1+5} ${y2} L ${x2} ${y2}`
+                : `M ${x1} ${y1} L ${x1-10} ${y1} L ${x1-10} ${y2} L ${x2} ${y2}`;
 
               return (
                 <g key={`${task.id}-${dep.predecessorId}`}>
-                  <path 
-                    d={`M ${x1} ${y1} L ${x1+10} ${y1} L ${x1+10} ${y2} L ${x2} ${y2}`}
-                    stroke={isLineCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')}
-                    strokeWidth={isLineCritical ? "1.8" : "1.2"}
-                    fill="none"
-                    strokeDasharray={isLineCritical ? "0" : "3 2"}
-                    className="transition-all duration-300"
-                  />
-                  <polygon 
-                    points={`${x2},${y2} ${x2-4},${y2-2.5} ${x2-4},${y2+2.5}`} 
-                    fill={isLineCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')} 
-                  />
+                  <path d={path} stroke={color} strokeWidth={isLineCritical ? "1.8" : "1.2"} fill="none" strokeDasharray={isLineCritical ? "0" : "3 2"} />
+                  <polygon points={`${x2},${y2} ${x2-4},${y2-2.5} ${x2-4},${y2+2.5}`} fill={color} transform={dep.type === DependencyType.FS || dep.type === DependencyType.SS ? '' : 'rotate(180, ' + x2 + ', ' + y2 + ')'} />
                 </g>
               );
             })
@@ -288,48 +239,20 @@ const Timeline: React.FC<TimelineProps> = ({
             const barWidth = Math.max(2, task.duration * PIXELS_PER_DAY);
             const hasChildren = tasks.some(t => t.parentId === task.id);
             const isCurrentlyCritical = showCriticalPath && task.isCritical;
-            const isEven = (idx + 1) % 2 === 0;
+            const isEven = idx % 2 === 0;
 
             const baseClasses = "absolute top-1/2 -translate-y-1/2 h-[22px] group transition-all duration-300 shadow-sm flex items-center px-0.5 overflow-hidden";
             const interactionClasses = hasChildren ? "rounded-sm cursor-default" : "rounded-md cursor-grab active:cursor-grabbing";
-            
-            let colorClasses = "";
-            if (!task.isMilestone) {
-              if (hasChildren) {
-                colorClasses = isCurrentlyCritical ? "bg-red-800 dark:bg-red-600" : "bg-slate-800 dark:bg-slate-100";
-              } else {
-                colorClasses = isCurrentlyCritical ? "bg-red-500 border-2 border-red-700 scale-y-110 shadow-lg" : getStatusColor(task.status);
-              }
-            } else {
-              colorClasses = "rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
-            }
+            let colorClasses = !task.isMilestone ? (hasChildren ? (isCurrentlyCritical ? "bg-red-800 dark:bg-red-600" : "bg-slate-800 dark:bg-slate-100") : (isCurrentlyCritical ? "bg-red-500 border-2 border-red-700 scale-y-110 shadow-lg" : getStatusColor(task.status))) : "rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
+
+            const rowBg = isEven ? 'bg-white dark:bg-slate-950' : 'bg-gray-50/50 dark:bg-slate-900/40';
 
             return (
-              <div 
-                key={task.id} 
-                className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 transition-colors ${isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950'}`} 
-                style={{ height: ROW_HEIGHT }}
-              >
-                <div 
-                  onMouseDown={(e) => handleMouseDown(e, task.id, 'move')}
-                  className={`${baseClasses} ${interactionClasses} ${colorClasses}`}
-                  style={{ left: startX, width: task.isMilestone ? 10 : barWidth }}
-                >
+              <div key={task.id} className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 transition-colors ${rowBg}`} style={{ height: ROW_HEIGHT }}>
+                <div onMouseDown={(e) => handleMouseDown(e, task.id, 'move')} className={`${baseClasses} ${interactionClasses} ${colorClasses}`} style={{ left: startX, width: task.isMilestone ? 10 : barWidth }}>
                   {!hasChildren && !task.isMilestone && (
                     <>
                       <div className="h-full absolute left-0 top-0 bg-black/10 pointer-events-none" style={{ width: `${task.progress}%` }} />
-                      {zoomLevel === ZoomLevel.DAYS && (
-                        <div className="relative flex items-center gap-1.5 w-full overflow-hidden text-white/90">
-                          {barWidth > 20 && (
-                            <i className={`fas ${getStatusIcon(task.status)} text-[10px] shrink-0 opacity-80`} title={task.status}></i>
-                          )}
-                          {barWidth > 60 && (
-                            <span className="text-[8px] font-bold uppercase truncate tracking-tighter opacity-70">
-                              {task.status}
-                            </span>
-                          )}
-                        </div>
-                      )}
                       <div onMouseDown={(e) => handleMouseDown(e, task.id, 'resize')} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-white/40 rounded-r-md z-10" />
                     </>
                   )}

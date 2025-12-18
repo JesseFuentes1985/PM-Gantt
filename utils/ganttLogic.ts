@@ -1,5 +1,5 @@
 
-import { Task, DependencyType, TaskStatus, RAGStatus } from "../types";
+import { Task, DependencyType, TaskStatus, RAGStatus, Dependency } from "../types";
 
 export const calculateDuration = (start: string, end: string): number => {
   const s = new Date(start + 'T00:00:00');
@@ -20,12 +20,28 @@ export const addDays = (dateStr: string, days: number): string => {
   return d.toISOString().split('T')[0];
 };
 
-export const createNewTask = (parentId: string | null, startDate: string): Task => {
+/**
+ * Formats YYYY-MM-DD to MM/DD/YYYY for professional display
+ */
+export const formatDateDisplay = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-');
+  return `${m}/${d}/${y}`;
+};
+
+export const createNewTask = (parentId: string | null, startDate: string, type: 'PF' | 'EPIC' | 'TASK' | 'STORY' = 'TASK'): Task => {
   const id = `task-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  
+  let defaultName = "New Task";
+  if (type === 'PF') defaultName = "New Feature (PF)";
+  else if (type === 'EPIC') defaultName = "New Epic";
+  else if (type === 'STORY') defaultName = "New Story";
+  else if (type === 'TASK') defaultName = "New Task";
+
   return {
     id,
     parentId,
-    name: "New Task",
+    name: defaultName,
     startDate,
     endDate: getEndDateFromDuration(startDate, 5),
     duration: 5,
@@ -36,22 +52,45 @@ export const createNewTask = (parentId: string | null, startDate: string): Task 
     role: "Contributor",
     dependencies: [],
     isMilestone: false,
-    isExpanded: true
+    isExpanded: true,
+    isAtRisk: false,
+    jiraType: type
   };
 };
 
-/**
- * Recalculates parent dates and statuses bottom-up.
- * Parent start = min(children start)
- * Parent end = max(children end)
- * Parent RAG = max criticality of children (Red > Amber > Green > Gray)
- */
+export const parseDependencyString = (str: string, hierarchyMap: Map<string, string>): Dependency | null => {
+  const trimmed = str.trim().toUpperCase();
+  if (!trimmed) return null;
+  const regex = /^([\d.]+)(FS|SS|FF|SF)?(?:([+-]\d+))?$/;
+  const match = trimmed.match(regex);
+  if (!match) return null;
+  const hId = match[1];
+  const typeStr = match[2] || 'FS';
+  const lagStr = match[3] || '0';
+  const predecessorId = hierarchyMap.get(hId);
+  if (!predecessorId) return null;
+  const type = typeStr === 'SS' ? DependencyType.SS :
+               typeStr === 'FF' ? DependencyType.FF :
+               typeStr === 'SF' ? DependencyType.SF : DependencyType.FS;
+  return { predecessorId, type, lagDays: parseInt(lagStr, 10) || 0 };
+};
+
+export const formatDependencyString = (deps: Dependency[], taskIdToHierarchy: Map<string, string>): string => {
+  return deps.map(d => {
+    const hId = taskIdToHierarchy.get(d.predecessorId);
+    if (!hId) return '';
+    const typeStr = d.type === DependencyType.FS ? '' : d.type;
+    const lagStr = d.lagDays === 0 ? '' : (d.lagDays > 0 ? `+${d.lagDays}` : `${d.lagDays}`);
+    return `${hId}${typeStr}${lagStr}`;
+  }).filter(Boolean).join(', ');
+};
+
 export const rollupHierarchy = (tasks: Task[]): Task[] => {
   const updatedTasks = [...tasks];
   const taskMap = new Map<string, Task>();
   updatedTasks.forEach(t => taskMap.set(t.id, t));
 
-  // Step 1: Enforce status-based RAG on leaf nodes
+  // First Pass: Update RAG for leaf nodes based on status
   updatedTasks.forEach((task, idx) => {
     const hasChildren = updatedTasks.some(t => t.parentId === task.id);
     if (!hasChildren) {
@@ -60,9 +99,10 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
       else if (task.status === TaskStatus.ON_HOLD) forcedRAG = RAGStatus.AMBER;
       else if (task.status === TaskStatus.NOT_STARTED) forcedRAG = RAGStatus.GRAY;
       else if (task.status === TaskStatus.COMPLETED) forcedRAG = RAGStatus.GREEN;
-      // In Progress allows manual RAG but defaults to Green if it was Gray
-      else if (task.status === TaskStatus.IN_PROGRESS && forcedRAG === RAGStatus.GRAY) forcedRAG = RAGStatus.GREEN;
-      
+      else if (task.status === TaskStatus.IN_PROGRESS) {
+          // Healthy progress defaults to Green unless manually set or over baseline
+          forcedRAG = (task.rag === RAGStatus.RED || task.rag === RAGStatus.AMBER) ? task.rag : RAGStatus.GREEN;
+      }
       updatedTasks[idx] = { ...task, rag: forcedRAG };
     }
   });
@@ -70,16 +110,30 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
   const processNode = (taskId: string) => {
     const children = updatedTasks.filter(t => t.parentId === taskId);
     if (children.length === 0) return;
-
-    // Process children first (bottom-up)
     children.forEach(child => processNode(child.id));
+    
+    const childStatuses = children.map(c => c.status);
+    const childRAGs = children.map(c => c.rag);
 
-    const parent = taskMap.get(taskId);
-    if (!parent) return;
+    // Rollup Status: Worst case logic
+    let parentStatus = TaskStatus.NOT_STARTED;
+    if (childStatuses.includes(TaskStatus.BLOCKED)) {
+      parentStatus = TaskStatus.BLOCKED;
+    } else if (childStatuses.every(s => s === TaskStatus.COMPLETED)) {
+      parentStatus = TaskStatus.COMPLETED;
+    } else if (childStatuses.some(s => s === TaskStatus.IN_PROGRESS || s === TaskStatus.COMPLETED || s === TaskStatus.ON_HOLD)) {
+      parentStatus = TaskStatus.IN_PROGRESS;
+    }
+
+    // Rollup RAG: Worst case logic
+    let parentRAG = RAGStatus.GRAY;
+    if (childRAGs.includes(RAGStatus.RED)) parentRAG = RAGStatus.RED;
+    else if (childRAGs.includes(RAGStatus.AMBER)) parentRAG = RAGStatus.AMBER;
+    else if (childRAGs.every(r => r === RAGStatus.GREEN)) parentRAG = RAGStatus.GREEN;
+    else if (childRAGs.some(r => r === RAGStatus.GREEN)) parentRAG = RAGStatus.GREEN;
 
     const childDates = children.map(c => new Date(c.startDate + 'T00:00:00').getTime());
     const childEndDates = children.map(c => new Date(c.endDate + 'T00:00:00').getTime());
-    
     const minStart = new Date(Math.min(...childDates)).toISOString().split('T')[0];
     const maxEnd = new Date(Math.max(...childEndDates)).toISOString().split('T')[0];
     
@@ -87,28 +141,6 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
     const avgProgress = totalDuration > 0 
       ? children.reduce((acc, c) => acc + (c.progress * c.duration), 0) / totalDuration 
       : 0;
-
-    // RAG Roll-up Logic: Red > Amber > Green > Gray
-    let parentRAG = RAGStatus.GRAY;
-    if (children.some(c => c.rag === RAGStatus.RED)) {
-      parentRAG = RAGStatus.RED;
-    } else if (children.some(c => c.rag === RAGStatus.AMBER)) {
-      parentRAG = RAGStatus.AMBER;
-    } else if (children.some(c => c.rag === RAGStatus.GREEN)) {
-      parentRAG = RAGStatus.GREEN;
-    }
-
-    // Status Roll-up Logic
-    let parentStatus = TaskStatus.NOT_STARTED;
-    if (children.every(c => c.status === TaskStatus.COMPLETED)) {
-      parentStatus = TaskStatus.COMPLETED;
-    } else if (children.some(c => c.status === TaskStatus.BLOCKED)) {
-      parentStatus = TaskStatus.BLOCKED;
-    } else if (children.some(c => c.status === TaskStatus.IN_PROGRESS || c.status === TaskStatus.COMPLETED)) {
-      parentStatus = TaskStatus.IN_PROGRESS;
-    } else if (children.some(c => c.status === TaskStatus.ON_HOLD)) {
-      parentStatus = TaskStatus.ON_HOLD;
-    }
 
     const parentIdx = updatedTasks.findIndex(t => t.id === taskId);
     updatedTasks[parentIdx] = {
@@ -122,65 +154,52 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
     };
     taskMap.set(taskId, updatedTasks[parentIdx]);
   };
-
-  // Find root level tasks and trigger roll-up
-  const rootIds = new Set(updatedTasks.filter(t => t.parentId === null).map(t => t.id));
+  
+  const rootIds = updatedTasks.filter(t => t.parentId === null).map(t => t.id);
   rootIds.forEach(id => processNode(id));
-
   return updatedTasks;
 };
 
-/**
- * Propagates date changes to successors.
- */
 export const propagateChanges = (tasks: Task[], updatedTaskId: string): Task[] => {
   let newTasks = [...tasks];
   const queue = [updatedTaskId];
   const processed = new Set<string>();
-
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     if (processed.has(currentId)) continue;
     processed.add(currentId);
-
     const currentTask = newTasks.find(t => t.id === currentId);
     if (!currentTask) continue;
-
-    const isParent = newTasks.some(t => t.parentId === currentId);
-    if (isParent) continue;
-
-    const successors = newTasks.filter(t => t.dependencies.some(d => d.predecessorId === currentId));
-
+    const successors = newTasks.filter(t => {
+      const isLeaf = !newTasks.some(child => child.parentId === t.id);
+      return isLeaf && t.dependencies.some(d => d.predecessorId === currentId);
+    });
     successors.forEach(succ => {
-      const isSuccParent = newTasks.some(t => t.parentId === succ.id);
-      if (isSuccParent) return;
-
-      const dep = succ.dependencies.find(d => d.predecessorId === currentId)!;
-      let newStart = succ.startDate;
-      let newEnd = succ.endDate;
-
-      if (dep.type === DependencyType.FS) {
-        const minStart = addDays(currentTask.endDate, 1 + dep.lagDays);
-        if (new Date(succ.startDate + 'T00:00:00') < new Date(minStart + 'T00:00:00')) {
-          newStart = minStart;
-          newEnd = getEndDateFromDuration(newStart, succ.duration);
+      const deps = succ.dependencies.filter(d => d.predecessorId === currentId);
+      let earliestPossibleStart = new Date(succ.startDate + 'T00:00:00').getTime();
+      let earliestPossibleEnd = new Date(succ.endDate + 'T00:00:00').getTime();
+      let modified = false;
+      deps.forEach(dep => {
+        if (dep.type === DependencyType.FS) {
+          const reqStart = new Date(addDays(currentTask.endDate, 1 + dep.lagDays) + 'T00:00:00').getTime();
+          if (reqStart > earliestPossibleStart) {
+            earliestPossibleStart = reqStart;
+            earliestPossibleEnd = new Date(getEndDateFromDuration(new Date(reqStart).toISOString().split('T')[0], succ.duration) + 'T00:00:00').getTime();
+            modified = true;
+          }
         }
-      } else if (dep.type === DependencyType.SS) {
-        const minStart = addDays(currentTask.startDate, dep.lagDays);
-        if (new Date(succ.startDate + 'T00:00:00') < new Date(minStart + 'T00:00:00')) {
-          newStart = minStart;
-          newEnd = getEndDateFromDuration(newStart, succ.duration);
-        }
-      }
-
-      if (newStart !== succ.startDate || newEnd !== succ.endDate) {
+      });
+      if (modified) {
         const idx = newTasks.findIndex(t => t.id === succ.id);
-        newTasks[idx] = { ...succ, startDate: newStart, endDate: newEnd };
+        newTasks[idx] = { 
+          ...succ, 
+          startDate: new Date(earliestPossibleStart).toISOString().split('T')[0],
+          endDate: new Date(earliestPossibleEnd).toISOString().split('T')[0]
+        };
         queue.push(succ.id);
       }
     });
   }
-
   return rollupHierarchy(newTasks);
 };
 
@@ -189,89 +208,29 @@ export interface VisibleTaskWithHierarchy {
   hierarchyId: string;
 }
 
-/**
- * Traverses the task tree to find visible tasks and assigns dot-notation hierarchical IDs.
- */
 export const getVisibleTasks = (tasks: Task[]): VisibleTaskWithHierarchy[] => {
   const visible: VisibleTaskWithHierarchy[] = [];
-  
   const traverse = (parentId: string | null, prefix: string) => {
-    // We filter based on parentId and preserve the original array order
     const children = tasks.filter(t => t.parentId === parentId);
-    
     children.forEach((child, index) => {
       const hierarchyId = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
       visible.push({ task: child, hierarchyId });
-      
-      if (child.isExpanded) {
-        traverse(child.id, hierarchyId);
-      }
+      if (child.isExpanded) traverse(child.id, hierarchyId);
     });
   };
-
   traverse(null, "");
   return visible;
 };
 
-/**
- * Identifies tasks on the critical path.
- */
 export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   if (tasks.length === 0) return [];
-
   const updatedTasks = tasks.map(t => ({ ...t, isCritical: false }));
-  
   const endDates = updatedTasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
   const projectEnd = new Date(Math.max(...endDates)).toISOString().split('T')[0];
-
   const criticalIds = new Set<string>();
   const isParent = (id: string) => updatedTasks.some(t => t.parentId === id);
-
   updatedTasks.forEach(t => {
-    if (!isParent(t.id) && t.endDate === projectEnd) {
-      criticalIds.add(t.id);
-    }
+    if (!isParent(t.id) && t.endDate === projectEnd) criticalIds.add(t.id);
   });
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const t of updatedTasks) {
-      if (criticalIds.has(t.id) || isParent(t.id)) continue;
-
-      const isDriving = updatedTasks.some(succ => {
-        if (!criticalIds.has(succ.id)) return false;
-        
-        const dep = succ.dependencies.find(d => d.predecessorId === t.id);
-        if (!dep) return false;
-
-        if (dep.type === DependencyType.FS) {
-          return addDays(t.endDate, 1 + dep.lagDays) === succ.startDate;
-        } else if (dep.type === DependencyType.SS) {
-          return addDays(t.startDate, dep.lagDays) === succ.startDate;
-        }
-        return false;
-      });
-
-      if (isDriving) {
-        criticalIds.add(t.id);
-        changed = true;
-      }
-    }
-  }
-
-  const finalTasks = updatedTasks.map(t => {
-    const checkCritical = (id: string): boolean => {
-      if (criticalIds.has(id)) return true;
-      const children = updatedTasks.filter(c => c.parentId === id);
-      return children.some(c => checkCritical(c.id));
-    };
-
-    return {
-      ...t,
-      isCritical: checkCritical(t.id)
-    };
-  });
-
-  return finalTasks;
+  return updatedTasks.map(t => ({ ...t, isCritical: criticalIds.has(t.id) }));
 };

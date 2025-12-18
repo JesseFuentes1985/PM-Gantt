@@ -1,84 +1,90 @@
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Task, RAGStatus, TaskStatus } from '../types';
-import { calculateDuration, getEndDateFromDuration } from '../utils/ganttLogic';
+import { calculateDuration, getEndDateFromDuration, parseDependencyString, formatDependencyString, formatDateDisplay } from '../utils/ganttLogic';
 
 interface TaskRowProps {
   task: Task;
   hierarchyId: string;
+  index: number;
   isSelected: boolean;
   allTasks: Task[];
+  hierarchyToIdMap: Map<string, string>;
+  idToHierarchyMap: Map<string, string>;
   onSelect: () => void;
   onToggle: () => void;
+  onAddSubtask: () => void;
   onUpdate: (updates: Partial<Task>) => void;
   onAIDecompose: () => void;
-  onAddSubtask: () => void;
   onRemoveTask: () => void;
   onDragStart: (e: React.DragEvent, id: string) => void;
   onDragOver: (e: React.DragEvent, id: string) => void;
   onDrop: (e: React.DragEvent, id: string) => void;
   isDragging?: boolean;
   isDragTarget?: boolean;
+  isSummaryMode?: boolean;
+  isDarkMode?: boolean;
+  columnVisibility: {
+    rag: boolean;
+    done: boolean;
+    owner: boolean;
+    atRisk: boolean; // Added
+    status: boolean;
+    pred: boolean;
+    duration: boolean;
+    dates: boolean;
+  };
 }
-
-const STATUS_CONFIG = {
-  [TaskStatus.NOT_STARTED]: { icon: 'fa-clock', color: 'text-slate-400', bg: 'bg-slate-100 dark:bg-slate-800' },
-  [TaskStatus.IN_PROGRESS]: { icon: 'fa-spinner fa-spin', color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900/30' },
-  [TaskStatus.COMPLETED]: { icon: 'fa-check-circle', color: 'text-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-900/30' },
-  [TaskStatus.ON_HOLD]: { icon: 'fa-pause-circle', color: 'text-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/30' },
-  [TaskStatus.BLOCKED]: { icon: 'fa-ban', color: 'text-rose-600', bg: 'bg-rose-100 dark:bg-rose-900/30' },
-};
 
 const TaskRow: React.FC<TaskRowProps> = ({ 
   task, 
   hierarchyId, 
+  index,
   isSelected, 
   allTasks,
+  hierarchyToIdMap,
+  idToHierarchyMap,
   onSelect, 
   onToggle, 
+  onAddSubtask,
   onUpdate, 
   onAIDecompose,
-  onAddSubtask,
   onRemoveTask,
   onDragStart,
   onDragOver,
   onDrop,
   isDragging,
-  isDragTarget
+  isDragTarget,
+  isSummaryMode,
+  isDarkMode,
+  columnVisibility
 }) => {
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [predInput, setPredInput] = useState("");
+  const [showRAGDetails, setShowRAGDetails] = useState(false);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsStatusOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    setPredInput(formatDependencyString(task.dependencies, idToHierarchyMap));
+  }, [task.dependencies, idToHierarchyMap]);
 
   const getDepth = (t: Task): number => {
-    let depth = 0;
-    let current = t;
-    while (current.parentId) {
-      const parent = allTasks.find(p => p.id === current.parentId);
+    let d = 0;
+    let curr = t;
+    while (curr.parentId) {
+      const parent = allTasks.find(p => p.id === curr.parentId);
       if (!parent) break;
-      depth++;
-      current = parent;
+      d++;
+      curr = parent;
     }
-    return depth;
+    return d;
   };
 
   const depth = getDepth(task);
   const hasChildren = allTasks.some(t => t.parentId === task.id);
   const isParentRow = hasChildren;
-  const isEven = hierarchyId.split('.').pop() === '0'; // placeholder logic, App.tsx uses index+1 logic
+  const isEven = index % 2 === 0;
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
     if (!val || isParentRow) return;
-    
     const updates: Partial<Task> = { [field]: val };
     if (field === 'startDate') {
       updates.endDate = getEndDateFromDuration(val, task.duration);
@@ -91,302 +97,309 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const handleDurationChange = (val: string) => {
     if (isParentRow) return;
     const dur = parseInt(val) || 1;
-    onUpdate({
-      duration: dur,
-      endDate: getEndDateFromDuration(task.startDate, dur)
-    });
+    onUpdate({ duration: dur, endDate: getEndDateFromDuration(task.startDate, dur) });
   };
 
   const cycleRAG = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isParentRow) return; 
-
     const currentRAG = task.rag;
     let nextRAG = RAGStatus.GREEN;
     if (currentRAG === RAGStatus.GREEN) nextRAG = RAGStatus.AMBER;
     else if (currentRAG === RAGStatus.AMBER) nextRAG = RAGStatus.RED;
     else if (currentRAG === RAGStatus.RED) nextRAG = RAGStatus.GRAY;
     else if (currentRAG === RAGStatus.GRAY) nextRAG = RAGStatus.GREEN;
-
     onUpdate({ rag: nextRAG });
   };
 
-  const rollUpSummary = useMemo(() => {
-    if (!isParentRow) return null;
+  const getRAGInsights = () => {
+    const issues: { icon: string; text: string; type: 'neutral' | 'warn' | 'error' | 'success' }[] = [];
     
-    const getChildrenRecursive = (parentId: string): Task[] => {
-      let results: Task[] = [];
-      const children = allTasks.filter(t => t.parentId === parentId);
-      children.forEach(child => {
-        const grandChildren = allTasks.filter(t => t.parentId === child.id);
-        if (grandChildren.length === 0) {
-          results.push(child);
-        } else {
-          results = results.concat(getChildrenRecursive(child.id));
-        }
-      });
-      return results;
-    };
+    if (isParentRow) {
+      const children = allTasks.filter(c => c.parentId === task.id);
+      const atRisk = children.filter(c => c.rag === RAGStatus.RED).length;
+      const delayed = children.filter(c => c.rag === RAGStatus.AMBER).length;
+      
+      issues.push({ icon: 'fa-sitemap', text: `Roll-up of ${children.length} sub-items`, type: 'neutral' });
+      if (atRisk > 0) issues.push({ icon: 'fa-exclamation-triangle', text: `${atRisk} critical child risks detected`, type: 'error' });
+      if (delayed > 0) issues.push({ icon: 'fa-clock', text: `${delayed} sub-items currently delayed`, type: 'warn' });
+    } else {
+      if (task.status === TaskStatus.BLOCKED) {
+        issues.push({ icon: 'fa-ban', text: "Manually set to BLOCKED", type: 'error' });
+      } else if (task.status === TaskStatus.ON_HOLD) {
+        issues.push({ icon: 'fa-pause', text: "Work is currently ON HOLD", type: 'warn' });
+      }
 
-    const leaves = getChildrenRecursive(task.id);
-    const counts = {
-      [RAGStatus.RED]: leaves.filter(l => l.rag === RAGStatus.RED).length,
-      [RAGStatus.AMBER]: leaves.filter(l => l.rag === RAGStatus.AMBER).length,
-      [RAGStatus.GREEN]: leaves.filter(l => l.rag === RAGStatus.GREEN).length,
-      [RAGStatus.GRAY]: leaves.filter(l => l.rag === RAGStatus.GRAY).length,
-    };
+      const incompletePredecessors = task.dependencies
+        .map(dep => allTasks.find(t => t.id === dep.predecessorId))
+        .filter(p => p && p.status !== TaskStatus.COMPLETED);
 
-    let reason = "All subtasks on track.";
-    if (counts[RAGStatus.RED] > 0) reason = `Red – Blocked because ${counts[RAGStatus.RED]} subtasks are Red.`;
-    else if (counts[RAGStatus.AMBER] > 0) reason = `Amber – At risk because ${counts[RAGStatus.AMBER]} subtasks are Amber.`;
-    else if (counts[RAGStatus.GRAY] > 0 && counts[RAGStatus.GREEN] === 0) reason = "Gray – All subtasks are not started.";
-
-    return { counts, reason };
-  }, [isParentRow, task.id, allTasks]);
-
-  const getRAGInfo = (rag: RAGStatus) => {
-    switch (rag) {
-      case RAGStatus.GREEN: 
-        return { 
-          color: 'bg-green-500', 
-          label: 'Green', 
-          desc: isParentRow ? (rollUpSummary?.reason || 'On Track') : 'Green – Healthy progress' 
-        };
-      case RAGStatus.AMBER: 
-        return { 
-          color: 'bg-amber-500', 
-          label: 'Amber', 
-          desc: isParentRow ? (rollUpSummary?.reason || 'At Risk') : 'Amber – At risk of schedule slip' 
-        };
-      case RAGStatus.RED: 
-        return { 
-          color: 'bg-rose-600', 
-          label: 'Red', 
-          desc: isParentRow ? (rollUpSummary?.reason || 'Blocked') : 'Red – Blocked due to dependency' 
-        };
-      case RAGStatus.GRAY:
-        return {
-          color: 'bg-gray-400 dark:bg-slate-600',
-          label: 'Gray',
-          desc: isParentRow ? (rollUpSummary?.reason || 'Not Started') : 'Gray – Not started'
-        };
+      if (incompletePredecessors.length > 0) {
+        issues.push({ icon: 'fa-link-slash', text: `${incompletePredecessors.length} incomplete predecessor dependencies`, type: 'error' });
+      }
     }
+
+    if (issues.length === 0) {
+      if (task.rag === RAGStatus.GREEN) issues.push({ icon: 'fa-check-double', text: "Healthy: No blocking issues found", type: 'success' });
+      if (task.rag === RAGStatus.GRAY) issues.push({ icon: 'fa-hourglass-start', text: "Planned: Pending project initiation", type: 'neutral' });
+    }
+
+    return issues;
   };
 
-  const ragInfo = getRAGInfo(task.rag);
-
-  const getJiraBadge = (type: string | undefined) => {
-    switch (type) {
-      case 'PF': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border-purple-200 dark:border-purple-800';
-      case 'EPIC': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 border-blue-200 dark:border-blue-800';
-      default: return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400 border-gray-200 dark:border-gray-700';
+  const handleStatusChange = (newStatus: TaskStatus) => {
+    const updates: Partial<Task> = { status: newStatus };
+    if (newStatus === TaskStatus.COMPLETED) {
+      updates.progress = 100;
+    } else if (newStatus === TaskStatus.NOT_STARTED) {
+      updates.progress = 0;
     }
+    if (newStatus === TaskStatus.BLOCKED) {
+      updates.rag = RAGStatus.RED;
+    }
+    onUpdate(updates);
   };
+
+  const ragColors = {
+    [RAGStatus.GREEN]: 'bg-emerald-500',
+    [RAGStatus.AMBER]: 'bg-amber-500',
+    [RAGStatus.RED]: 'bg-rose-500',
+    [RAGStatus.GRAY]: 'bg-slate-300 dark:bg-slate-600',
+  };
+
+  const statusIcons = {
+    [TaskStatus.NOT_STARTED]: 'fa-circle-notch text-gray-300',
+    [TaskStatus.IN_PROGRESS]: 'fa-spinner fa-spin text-blue-500',
+    [TaskStatus.COMPLETED]: 'fa-check-circle text-emerald-500',
+    [TaskStatus.ON_HOLD]: 'fa-pause-circle text-amber-500',
+    [TaskStatus.BLOCKED]: 'fa-exclamation-circle text-rose-500',
+  };
+
+  // Base background logic
+  const rowBaseColor = isSelected 
+    ? 'bg-blue-50/80 dark:bg-blue-900/20' 
+    : isEven ? 'bg-white dark:bg-slate-900' : 'bg-gray-50/50 dark:bg-slate-900/40';
+
+  // "At Risk" highlight logic - subtle light red/pink
+  const riskColor = task.isAtRisk 
+    ? (isDarkMode ? 'bg-red-900/10' : 'bg-red-50/70')
+    : '';
+
+  const finalRowBg = task.isAtRisk && !isSelected ? riskColor : rowBaseColor;
+
+  const typeConfig = {
+    PF: { label: 'PF', icon: 'fa-rocket', class: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800' },
+    EPIC: { label: 'EPIC', icon: 'fa-bolt', class: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800' },
+    STORY: { label: 'STORY', icon: 'fa-bookmark', class: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800' },
+    TASK: { label: 'TASK', icon: 'fa-check-square', class: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800' },
+  };
+
+  const config = typeConfig[task.jiraType as keyof typeof typeConfig] || typeConfig.TASK;
+  const insights = getRAGInsights();
+
+  // Smart tooltip positioning
+  const isNearTop = index < 4;
+  const tooltipPositionClass = isNearTop 
+    ? "absolute top-full right-0 mt-3 z-[100] w-64 animate-in fade-in slide-in-from-top-2"
+    : "absolute bottom-full right-0 mb-3 z-[100] w-64 animate-in fade-in slide-in-from-bottom-2";
+
+  const renderRAGIndicator = (sizeClass: string = "w-[10px] h-[10px]") => (
+    <div className="relative">
+      <div 
+        onClick={cycleRAG} 
+        onMouseEnter={() => setShowRAGDetails(true)}
+        onMouseLeave={() => setShowRAGDetails(false)}
+        className={`${sizeClass} rounded-full cursor-pointer transition-all hover:scale-125 shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${ragColors[task.rag]}`} 
+      />
+      {showRAGDetails && (
+        <div className={`${tooltipPositionClass} bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg shadow-xl duration-200 pointer-events-none`}>
+          <div className={`p-3 border-b dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50 rounded-t-lg`}>
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${ragColors[task.rag]}`}></div>
+              <span className={`text-[10px] font-black uppercase tracking-widest ${task.rag === RAGStatus.RED ? 'text-rose-600' : task.rag === RAGStatus.AMBER ? 'text-amber-600' : 'text-emerald-600'}`}>
+                {task.rag} STATUS
+              </span>
+            </div>
+            <span className="text-[9px] text-gray-400 font-bold uppercase">{hierarchyId}</span>
+          </div>
+          <div className="p-3 space-y-2.5">
+            {insights.map((issue, i) => (
+              <div key={i} className="flex gap-2.5 items-start">
+                <i className={`fas ${issue.icon} mt-0.5 text-[10px] shrink-0 ${
+                  issue.type === 'error' ? 'text-rose-500' : 
+                  issue.type === 'warn' ? 'text-amber-500' : 
+                  issue.type === 'success' ? 'text-emerald-500' : 'text-slate-400'
+                }`}></i>
+                <span className={`text-[10px] leading-relaxed font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{issue.text}</span>
+              </div>
+            ))}
+          </div>
+          <div className="px-3 py-2 bg-gray-50 dark:bg-slate-900/50 rounded-b-lg border-t dark:border-slate-700">
+             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Click indicator to cycle health</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  if (isSummaryMode) {
+    return (
+      <div 
+        className={`flex items-center h-[36px] border-b dark:border-slate-800 text-[11px] group transition-all duration-75 px-1.5 gap-2 relative ${finalRowBg} ${isDragging ? 'opacity-50' : ''} ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
+        onClick={onSelect}
+      >
+        <div className="w-3 shrink-0 flex items-center justify-center">
+          {isParentRow && (
+            <button onClick={(e) => { e.stopPropagation(); onToggle(); }} className="text-gray-400 hover:text-blue-600">
+              <i className={`fas ${task.isExpanded ? 'fa-caret-down' : 'fa-caret-right'} text-[10px]`}></i>
+            </button>
+          )}
+        </div>
+        
+        <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
+           <div style={{ width: depth * 8 }} className="shrink-0"></div>
+           <i className={`fas ${config.icon} text-[10px] shrink-0 ${isParentRow ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 opacity-60'}`}></i>
+           <span className={`truncate text-[10px] uppercase font-bold tracking-tight ${isParentRow ? 'text-gray-900 dark:text-slate-100' : 'text-gray-500 dark:text-slate-400'}`}>
+             {task.jiraId || task.name.substring(0, 5)}
+           </span>
+        </div>
+
+        <div className="w-10 shrink-0 flex items-center justify-end gap-1.5 px-1 h-full border-l dark:border-slate-800">
+           <i className={`fas ${statusIcons[task.status]} text-[10px]`}></i>
+           {renderRAGIndicator("w-[6px] h-[6px]")}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
+      className={`flex items-center h-[36px] border-b dark:border-slate-800 text-[11px] group transition-all duration-75 ${finalRowBg} ${isDragging ? 'opacity-50' : ''} ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
       onClick={onSelect}
-      draggable
+      draggable={!isParentRow}
       onDragStart={(e) => onDragStart(e, task.id)}
       onDragOver={(e) => onDragOver(e, task.id)}
       onDrop={(e) => onDrop(e, task.id)}
-      className={`group flex border-b items-center text-xs transition-colors cursor-default h-[36px] dark:border-slate-800/80 relative
-        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40 z-[5]' : (hierarchyId.includes('.') ? 'bg-white dark:bg-slate-950' : 'bg-gray-50/80 dark:bg-slate-900/50')}
-        ${isParentRow ? 'font-semibold' : ''}
-        ${isDragging ? 'opacity-30' : 'opacity-100'}
-        ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
     >
-      <div className="w-8 flex items-center justify-center text-gray-300 dark:text-slate-600 cursor-grab active:cursor-grabbing hover:text-gray-500 dark:hover:text-slate-400 transition-colors">
-        <i className="fas fa-grip-vertical text-[10px]"></i>
+      <div className="w-8 shrink-0 flex items-center justify-center h-full">
+        {isParentRow && (
+          <button onClick={(e) => { e.stopPropagation(); onToggle(); }} className="text-gray-400 hover:text-blue-600 transition-colors">
+            <i className={`fas ${task.isExpanded ? 'fa-caret-down' : 'fa-caret-right'} text-sm`}></i>
+          </button>
+        )}
       </div>
 
-      <div className="w-12 p-2 text-center text-slate-500 dark:text-slate-400 font-mono text-[10px] shrink-0 font-bold border-r border-gray-100/50 dark:border-slate-800/30">
+      <div className="w-10 shrink-0 text-center font-mono text-[9px] text-gray-400 dark:text-slate-500 border-l dark:border-slate-800 h-full flex items-center justify-center">
         {hierarchyId}
       </div>
-      
-      <div className="flex-1 p-1.5 flex items-center min-w-0" style={{ paddingLeft: `${depth * 20 + 4}px` }}>
-        <div className="flex items-center gap-1 shrink-0">
-          <button 
-            onClick={(e) => { e.stopPropagation(); onToggle(); }} 
-            className={`w-4 h-4 flex items-center justify-center transition-opacity ${!hasChildren ? 'opacity-0 cursor-default' : 'text-gray-400 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300'}`}
-          >
-            <i className={`fas ${task.isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} text-[9px]`}></i>
-          </button>
+
+      <div className="flex-1 min-w-0 px-2 flex items-center gap-2 h-full border-l dark:border-slate-800">
+        <div style={{ width: depth * 16 }}></div>
+        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-[3px] text-[8px] font-black uppercase tracking-tighter shrink-0 border transition-all ${config.class}`}>
+          <i className={`fas ${config.icon} text-[9px]`}></i>
+          <span>{task.jiraId || config.label}</span>
         </div>
-
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {!isParentRow && (
-            <div className="flex items-center gap-1.5 shrink-0 mr-1">
-              <button
-                onClick={(e) => { e.stopPropagation(); onUpdate({ status: task.status === TaskStatus.IN_PROGRESS ? TaskStatus.ON_HOLD : TaskStatus.IN_PROGRESS }); }}
-                title={task.status === TaskStatus.IN_PROGRESS ? "Pause Task" : "Resume Task"}
-                className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
-                  task.status === TaskStatus.IN_PROGRESS 
-                  ? 'bg-blue-500 text-white shadow-sm' 
-                  : 'bg-gray-100 dark:bg-slate-800 text-gray-400 hover:text-blue-500'
-                }`}
-              >
-                <i className={`fas ${task.status === TaskStatus.IN_PROGRESS ? 'fa-pause' : 'fa-play'} text-[7px]`}></i>
-              </button>
-              
-              <div className="relative" ref={dropdownRef}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setIsStatusOpen(!isStatusOpen); }}
-                  className={`w-6 h-6 flex items-center justify-center rounded-md hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors ${isStatusOpen ? 'bg-gray-200 dark:bg-slate-700' : ''}`}
-                >
-                  <i className={`fas ${STATUS_CONFIG[task.status].icon} ${STATUS_CONFIG[task.status].color} text-[10px]`}></i>
-                </button>
-
-                {isStatusOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-40 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg shadow-xl z-[100] overflow-hidden py-1">
-                    {Object.values(TaskStatus).map((status) => (
-                      <button
-                        key={status}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onUpdate({ status });
-                          setIsStatusOpen(false);
-                        }}
-                        className={`w-full flex items-center gap-3 px-3 py-2 text-[11px] font-medium transition-colors text-left
-                          ${task.status === status ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
-                      >
-                        <i className={`fas ${STATUS_CONFIG[status].icon} ${STATUS_CONFIG[status].color} w-4 text-center`}></i>
-                        {status}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+        <input 
+          value={task.name} 
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          className={`bg-transparent outline-none flex-1 truncate transition-colors focus:bg-white dark:focus:bg-slate-800 px-1 rounded ${isParentRow ? 'font-bold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400'}`}
+        />
+        <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+          {task.jiraType !== 'STORY' && (
+            <button onClick={(e) => { e.stopPropagation(); onAddSubtask(); }} className="p-1 text-gray-400 hover:text-green-500" title={`Add subtask`}><i className="fas fa-plus-circle"></i></button>
           )}
-          
-          <div className="flex items-center gap-2 w-full min-w-0">
-             {task.jiraType && (
-               <span className={`px-1.5 py-0.5 rounded text-[8px] font-black border tracking-tighter shrink-0 ${getJiraBadge(task.jiraType)}`}>
-                 {task.jiraType}
-               </span>
-             )}
-             {task.jiraId && (
-               <span className="text-[9px] font-mono text-gray-400 dark:text-slate-500 shrink-0">[{task.jiraId}]</span>
-             )}
-             <input 
-              value={task.name} 
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onUpdate({ name: e.target.value })}
-              className={`bg-transparent border-none focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-700 rounded px-1 w-full truncate text-[11px] placeholder-gray-300 dark:placeholder-slate-700 dark:text-slate-200 ${isParentRow ? 'font-bold' : 'font-medium'}`}
-              placeholder="New Jira Task..."
-            />
+          {!isParentRow && <button onClick={(e) => { e.stopPropagation(); onAIDecompose(); }} className="p-1 text-indigo-400 hover:text-indigo-500" title="AI Breakdown"><i className="fas fa-sparkles"></i></button>}
+          <button onClick={(e) => { e.stopPropagation(); onRemoveTask(); }} className="p-1 text-gray-300 hover:text-rose-500" title="Delete"><i className="fas fa-trash-alt"></i></button>
+        </div>
+      </div>
+
+      {columnVisibility.dates && (
+        <>
+          <div className="w-[110px] shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center relative hover:bg-gray-100/50 dark:hover:bg-slate-800/50 cursor-pointer group/date">
+            <span className="text-gray-500 dark:text-slate-400 font-mono text-[10px] pointer-events-none z-10">{formatDateDisplay(task.startDate)}</span>
+            {!isParentRow && <i className="fas fa-calendar-alt absolute right-2 text-[10px] text-gray-300 group-hover/date:text-blue-500 transition-colors pointer-events-none"></i>}
+            {!isParentRow && <input type="date" value={task.startDate} onChange={(e) => handleDateChange('startDate', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />}
+          </div>
+
+          <div className="w-[110px] shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center relative hover:bg-gray-100/50 dark:hover:bg-slate-800/50 cursor-pointer group/date">
+            <span className="text-gray-500 dark:text-slate-400 font-mono text-[10px] pointer-events-none z-10">{formatDateDisplay(task.endDate)}</span>
+            {!isParentRow && <i className="fas fa-calendar-alt absolute right-2 text-[10px] text-gray-300 group-hover/date:text-blue-500 transition-colors pointer-events-none"></i>}
+            {!isParentRow && <input type="date" value={task.endDate} onChange={(e) => handleDateChange('endDate', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />}
+          </div>
+        </>
+      )}
+
+      {columnVisibility.duration && (
+        <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
+          <input type="number" value={task.duration} onChange={(e) => handleDurationChange(e.target.value)} disabled={isParentRow} className={`bg-transparent outline-none w-10 text-center font-bold ${isParentRow ? 'text-gray-400' : 'text-blue-600 dark:text-blue-400'}`} />
+        </div>
+      )}
+
+      {columnVisibility.pred && (
+        <div className="w-20 shrink-0 border-l dark:border-slate-800 h-full flex items-center px-1">
+          <input 
+            value={predInput} 
+            onChange={(e) => setPredInput(e.target.value)}
+            onBlur={() => {
+              const parts = predInput.split(',').map(s => s.trim()).filter(Boolean);
+              const newDeps = parts.map(p => parseDependencyString(p, hierarchyToIdMap)).filter(Boolean) as any[];
+              onUpdate({ dependencies: newDeps.filter(d => d.predecessorId !== task.id) });
+            }}
+            placeholder="--"
+            className="bg-transparent outline-none w-full text-[10px] uppercase font-bold text-gray-400 text-center placeholder-gray-200"
+          />
+        </div>
+      )}
+
+      {columnVisibility.status && (
+        <div className="w-32 shrink-0 border-l dark:border-slate-800 h-full flex items-center px-1">
+          <div className="relative w-full flex items-center gap-1.5 px-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-colors group/status">
+            <i className={`fas ${statusIcons[task.status]} text-[10px] shrink-0`}></i>
+            {isParentRow ? (
+              <span className="text-[10px] font-bold text-gray-500 dark:text-slate-400 truncate uppercase tracking-tight">{task.status}</span>
+            ) : (
+              <select 
+                value={task.status} 
+                onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
+                className="bg-transparent outline-none w-full text-[10px] font-bold text-gray-700 dark:text-slate-200 cursor-pointer appearance-none uppercase tracking-tight"
+              >
+                {Object.values(TaskStatus).map(s => <option key={s} value={s} className="bg-white dark:bg-slate-900">{s.toUpperCase()}</option>)}
+              </select>
+            )}
           </div>
         </div>
-        
-        <div className="flex items-center gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          <button 
-            onClick={(e) => { e.stopPropagation(); onAddSubtask(); }}
-            className="text-green-600 dark:text-green-500 hover:text-green-700 p-1 rounded hover:bg-green-100/50 dark:hover:bg-green-900/20"
-            title={!task.parentId ? "Add Epic" : "Add Subtask"}
-          >
-            <i className="fas fa-plus-circle text-[10px]"></i>
-          </button>
-          <button 
-            onClick={(e) => { e.stopPropagation(); onRemoveTask(); }}
-            className="text-red-500 dark:text-red-400 hover:text-red-700 p-1 rounded hover:bg-red-100/50 dark:hover:bg-red-900/20"
-            title="Delete Task"
-          >
-            <i className="fas fa-minus-circle text-[10px]"></i>
-          </button>
+      )}
+
+      {columnVisibility.owner && (
+        <div className="w-24 shrink-0 border-l dark:border-slate-800 h-full flex items-center px-2">
+          <input value={task.owner} onChange={(e) => onUpdate({ owner: e.target.value })} className="bg-transparent outline-none w-full truncate text-gray-500 dark:text-slate-400 text-left px-1 hover:bg-white dark:hover:bg-slate-800 rounded" />
         </div>
-      </div>
+      )}
 
-      <div className="w-32 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0 relative group/date">
-        <input 
-          type="date"
-          value={task.startDate}
-          disabled={isParentRow}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => handleDateChange('startDate', e.target.value)}
-          className={`w-full bg-transparent border-none text-[10px] py-1 px-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
-        />
-        <i className="fas fa-calendar-days absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 text-[10px] pointer-events-none transition-colors group-hover/date:text-blue-500"></i>
-      </div>
+      {columnVisibility.atRisk && (
+        <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
+          <input 
+            type="checkbox" 
+            checked={task.isAtRisk || false} 
+            onChange={(e) => onUpdate({ isAtRisk: e.target.checked })}
+            className="w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+          />
+        </div>
+      )}
 
-      <div className="w-32 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0 relative group/date">
-        <input 
-          type="date"
-          value={task.endDate}
-          disabled={isParentRow}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => handleDateChange('endDate', e.target.value)}
-          className={`w-full bg-transparent border-none text-[10px] py-1 px-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
-        />
-        <i className="fas fa-calendar-days absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 text-[10px] pointer-events-none transition-colors group-hover/date:text-blue-500"></i>
-      </div>
-
-      <div className="w-16 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
-        <input 
-          type="number"
-          min="1"
-          value={task.duration}
-          disabled={isParentRow}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => handleDurationChange(e.target.value)}
-          className={`w-full bg-transparent border-none text-[10px] p-1 focus:ring-0 text-center text-gray-800 dark:text-slate-200 font-mono ${isParentRow ? 'opacity-50 font-bold' : ''}`}
-        />
-      </div>
-
-      <div className="w-20 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
-        <input 
-          value={task.owner} 
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onUpdate({ owner: e.target.value })}
-          className="bg-transparent border-none focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-700 rounded px-1 w-full truncate text-[10px] placeholder-gray-300 dark:placeholder-slate-700 dark:text-slate-400 font-medium"
-          placeholder="Owner..."
-        />
-      </div>
-
-      <div className="w-14 p-2 border-l border-gray-100 dark:border-slate-800/80 text-right text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
-        <input 
-          type="number"
-          min="0"
-          max="100"
-          value={task.progress}
-          disabled={isParentRow}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })}
-          className={`w-full bg-transparent border-none text-right text-[10px] p-0 focus:ring-0 text-gray-400 dark:text-slate-500 font-mono ${isParentRow ? 'opacity-50 font-bold' : ''}`}
-        />
-      </div>
-
-      <div className="w-10 p-2 border-l border-gray-100 dark:border-slate-800/80 flex justify-center shrink-0 relative group/rag overflow-visible">
-        <div 
-          onClick={cycleRAG}
-          className={`w-3.5 h-3.5 rounded-full ${ragInfo.color} shadow-sm transition-transform ${!isParentRow ? 'cursor-pointer hover:scale-125' : 'cursor-help'}`}
-        ></div>
-        
-        {/* Hover Tooltip - Repositioned to the LEFT of the dot to avoid all clipping issues */}
-        <div className="absolute right-full top-1/2 -translate-y-1/2 mr-3 hidden group-hover/rag:flex z-[9999] pointer-events-none items-center">
-          <div className="bg-slate-900 text-white text-[11px] px-3 py-2 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.6)] whitespace-nowrap flex flex-col items-center border border-white/10 ring-1 ring-black/50">
-            <span className="font-black text-[10px] uppercase tracking-widest border-b border-white/10 w-full text-center pb-1.5 mb-1.5 flex items-center justify-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${ragInfo.color}`}></div>
-              {ragInfo.label} Status
-            </span>
-            <div className="flex flex-col gap-1 w-full text-center px-1">
-              <span className="font-medium whitespace-normal max-w-[200px] leading-tight text-white/90">
-                {ragInfo.desc}
-              </span>
-              {isParentRow && rollUpSummary && (
-                <div className="mt-2 flex items-center justify-center gap-2 border-t border-white/10 pt-1.5 text-[10px] font-bold">
-                  <span className="text-rose-400">{rollUpSummary.counts[RAGStatus.RED]} Red</span>
-                  <span className="text-amber-400">{rollUpSummary.counts[RAGStatus.AMBER]} Amb</span>
-                  <span className="text-emerald-400">{rollUpSummary.counts[RAGStatus.GREEN]} Grn</span>
-                  <span className="text-gray-400">{rollUpSummary.counts[RAGStatus.GRAY]} Gry</span>
-                </div>
-              )}
-            </div>
+      {columnVisibility.done && (
+        <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
+          <div className="flex items-center justify-center w-full">
+            <input type="number" value={task.progress} onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} disabled={isParentRow} className={`bg-transparent outline-none w-8 text-center font-black ${isParentRow ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-500'}`} />
+            <span className="text-[9px] font-bold text-gray-400 -ml-1">%</span>
           </div>
-          {/* Tooltip arrow pointing RIGHT towards the RAG dot */}
-          <div className="border-[6px] border-transparent border-l-slate-900 translate-x-[-1px]"></div>
         </div>
-      </div>
+      )}
+
+      {columnVisibility.rag && (
+        <div className="w-12 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
+          {renderRAGIndicator()}
+        </div>
+      )}
     </div>
   );
 };
