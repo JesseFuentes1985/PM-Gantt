@@ -366,13 +366,13 @@ const App: React.FC = () => {
       
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
         <div className="flex w-full overflow-hidden">
-          <div className="w-[882px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
+          <div className="w-[914px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
             <div className="flex bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800 text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider h-[63px] items-end pb-2 sticky top-0 z-30">
               <div className="w-8 flex items-center justify-center"></div>
               <div className="w-8 p-2 text-center">#</div>
               <div className="flex-1 p-2">Jira Task Name</div>
-              <div className="w-28 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
-              <div className="w-28 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
+              <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
+              <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
               <div className="w-16 p-2 border-l border-gray-100 dark:border-slate-800 text-center">Dur.</div>
               <div className="w-20 p-2 border-l border-gray-100 dark:border-slate-800">Owner</div>
               <div className="w-14 p-2 border-l border-gray-100 dark:border-slate-800 text-right">Done</div>

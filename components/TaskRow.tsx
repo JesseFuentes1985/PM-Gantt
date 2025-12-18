@@ -297,26 +297,28 @@ const TaskRow: React.FC<TaskRowProps> = ({
         </div>
       </div>
 
-      <div className="w-28 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
+      <div className="w-32 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0 relative group/date">
         <input 
           type="date"
           value={task.startDate}
           disabled={isParentRow}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => handleDateChange('startDate', e.target.value)}
-          className={`w-full bg-transparent border-none text-[10px] p-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
+          className={`w-full bg-transparent border-none text-[10px] py-1 px-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
         />
+        <i className="fas fa-calendar-days absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 text-[10px] pointer-events-none transition-colors group-hover/date:text-blue-500"></i>
       </div>
 
-      <div className="w-28 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
+      <div className="w-32 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0 relative group/date">
         <input 
           type="date"
           value={task.endDate}
           disabled={isParentRow}
           onClick={(e) => e.stopPropagation()}
           onChange={(e) => handleDateChange('endDate', e.target.value)}
-          className={`w-full bg-transparent border-none text-[10px] p-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
+          className={`w-full bg-transparent border-none text-[10px] py-1 px-1 focus:ring-0 cursor-pointer text-gray-800 dark:text-slate-200 dark:[color-scheme:dark] ${isParentRow ? 'opacity-50 cursor-not-allowed font-bold' : ''}`}
         />
+        <i className="fas fa-calendar-days absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 text-[10px] pointer-events-none transition-colors group-hover/date:text-blue-500"></i>
       </div>
 
       <div className="w-16 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
