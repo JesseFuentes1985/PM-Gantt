@@ -1,5 +1,5 @@
 
-import { Task, DependencyType, TaskStatus, RAGStatus, Dependency } from "../types";
+import { Task, DependencyType, TaskStatus, RAGStatus, Dependency, ZoomLevel } from "../types";
 
 export const calculateDuration = (start: string, end: string): number => {
   const s = new Date(start + 'T00:00:00');
@@ -27,6 +27,19 @@ export const formatDateDisplay = (dateStr: string): string => {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-');
   return `${m}/${d}/${y}`;
+};
+
+export const getProjectBounds = (tasks: Task[], zoomLevel: ZoomLevel) => {
+  if (tasks.length === 0) return { start: new Date(), end: new Date() };
+  const starts = tasks.map(t => new Date(t.startDate + 'T00:00:00').getTime());
+  const ends = tasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
+  const min = new Date(Math.min(...starts));
+  const max = new Date(Math.max(...ends));
+  
+  const buffer = zoomLevel === ZoomLevel.DAYS ? 10 : zoomLevel === ZoomLevel.WEEKS ? 30 : 90;
+  min.setDate(min.getDate() - buffer); 
+  max.setDate(max.getDate() + buffer * 2); 
+  return { start: min, end: max };
 };
 
 export const createNewTask = (parentId: string | null, startDate: string, type: 'PF' | 'EPIC' | 'TASK' | 'STORY' = 'TASK'): Task => {
@@ -91,7 +104,6 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
   const taskMap = new Map<string, Task>();
   updatedTasks.forEach(t => taskMap.set(t.id, t));
 
-  // First Pass: Update RAG for leaf nodes based on status and manual risk flag
   updatedTasks.forEach((task, idx) => {
     const hasChildren = updatedTasks.some(t => t.parentId === task.id);
     if (!hasChildren) {
@@ -105,9 +117,7 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
       } else if (task.status === TaskStatus.NOT_STARTED) {
         forcedRAG = RAGStatus.GRAY;
       } else if (task.status === TaskStatus.IN_PROGRESS) {
-        // Maintain manual Amber if it was already set or is currently at risk
         forcedRAG = (task.rag === RAGStatus.RED || task.rag === RAGStatus.AMBER || task.isAtRisk) ? RAGStatus.AMBER : RAGStatus.GREEN;
-        // But if it was Red manually, we keep it Red unless status changed
         if (task.rag === RAGStatus.RED) forcedRAG = RAGStatus.RED;
       }
       updatedTasks[idx] = { ...task, rag: forcedRAG };
@@ -122,7 +132,6 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
     const childStatuses = children.map(c => c.status);
     const childRAGs = children.map(c => c.rag);
 
-    // Rollup Status: Worst case logic
     let parentStatus = TaskStatus.NOT_STARTED;
     if (childStatuses.includes(TaskStatus.BLOCKED)) {
       parentStatus = TaskStatus.BLOCKED;
@@ -132,7 +141,6 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
       parentStatus = TaskStatus.IN_PROGRESS;
     }
 
-    // Rollup RAG: Severity hierarchy logic
     let parentRAG = RAGStatus.GRAY;
     if (childRAGs.includes(RAGStatus.RED)) {
       parentRAG = RAGStatus.RED;
@@ -234,88 +242,53 @@ export const getVisibleTasks = (tasks: Task[]): VisibleTaskWithHierarchy[] => {
   return visible;
 };
 
-/**
- * Calculates the Critical Path using the Backward Pass method.
- * It assumes Early Finish (EF) is the current endDate (as maintained by propagateChanges).
- * It finds Late Finish (LF) by iterating through the dependency graph backwards.
- */
 export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   if (tasks.length === 0) return [];
-
-  // Reset critical status and float
   const updatedTasks = tasks.map(t => ({ ...t, isCritical: false, totalFloat: 0 }));
-  
-  // We only calculate CPM for leaf tasks (containers follow their children)
   const isParent = (id: string) => updatedTasks.some(t => t.parentId === id);
   const leafTasks = updatedTasks.filter(t => !isParent(t.id));
-  
   if (leafTasks.length === 0) return updatedTasks;
-
-  // Project End Date (Latest EF)
   const endDates = leafTasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
   const maxEndTimestamp = Math.max(...endDates);
-
-  // Map for easy access and LF tracking
   const taskMap = new Map<string, Task>();
   updatedTasks.forEach(t => taskMap.set(t.id, t));
-  
   const lateFinishMap = new Map<string, number>();
-
-  // Backward Pass Helper
   const getLateFinish = (taskId: string): number => {
     if (lateFinishMap.has(taskId)) return lateFinishMap.get(taskId)!;
-    
     const task = taskMap.get(taskId);
     if (!task) return maxEndTimestamp;
-
-    // Successors: tasks that depend on this task
     const successors = updatedTasks.filter(t => 
       !isParent(t.id) && 
       t.dependencies.some(d => d.predecessorId === taskId)
     );
-
     let lf: number;
     if (successors.length === 0) {
-      // If no successors, LF is the project end
       lf = maxEndTimestamp;
     } else {
-      // LF(A) = min(LS of all successors)
-      // LS(B) = LF(B) - duration(B) + 1
       const successorLateStarts = successors.map(s => {
         const sLF = getLateFinish(s.id);
         const sLS = sLF - (s.duration - 1) * 24 * 60 * 60 * 1000;
-        // FS dependency: successor LS must be at least 1 day after predecessor LF
         return sLS - 1 * 24 * 60 * 60 * 1000;
       });
       lf = Math.min(...successorLateStarts);
     }
-
     lateFinishMap.set(taskId, lf);
     return lf;
   };
-
-  // Identify critical leaf tasks and assign float
   const criticalLeafIds = new Set<string>();
   const floatMap = new Map<string, number>();
-
   leafTasks.forEach(task => {
     const ef = new Date(task.endDate + 'T00:00:00').getTime();
     const lf = getLateFinish(task.id);
-    
-    // Total Float = LF - EF
     const floatDays = Math.round((lf - ef) / (1000 * 60 * 60 * 24));
     floatMap.set(task.id, Math.max(0, floatDays));
-
     if (floatDays <= 0) {
       criticalLeafIds.add(task.id);
     }
   });
-
-  // Roll up criticality and float to parent tasks
   const finalTasks = updatedTasks.map(t => {
     let isCritical = false;
     let totalFloat = 0;
-
     if (criticalLeafIds.has(t.id)) {
       isCritical = true;
       totalFloat = 0;
@@ -332,14 +305,11 @@ export const identifyCriticalPath = (tasks: Task[]): Task[] => {
       });
       const leafDescendants = descendants.filter(d => !isParent(d.id));
       isCritical = leafDescendants.some(d => criticalLeafIds.has(d.id));
-      // Parent float is the minimum float of its leaf descendants
       totalFloat = leafDescendants.length > 0 ? Math.min(...leafDescendants.map(d => floatMap.get(d.id) || 0)) : 0;
     } else {
       totalFloat = floatMap.get(t.id) || 0;
     }
-
     return { ...t, isCritical, totalFloat };
   });
-
   return finalTasks;
 };

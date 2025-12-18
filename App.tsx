@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
-import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString } from './utils/ganttLogic';
+import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
@@ -13,9 +13,9 @@ const INITIAL_TASKS: Task[] = [
     id: 'PF-1',
     parentId: null,
     name: 'PF-01: Core Platform Infrastructure',
-    startDate: '2023-11-01',
-    endDate: '2023-11-15',
-    duration: 15,
+    startDate: '2025-10-15',
+    endDate: '2025-11-10',
+    duration: 27,
     progress: 80,
     status: TaskStatus.IN_PROGRESS,
     rag: RAGStatus.GREEN,
@@ -32,9 +32,9 @@ const INITIAL_TASKS: Task[] = [
     id: 'EP-1.1',
     parentId: 'PF-1',
     name: 'EPIC: Database Schema Migration',
-    startDate: '2023-11-01',
-    endDate: '2023-11-05',
-    duration: 5,
+    startDate: '2025-10-15',
+    endDate: '2025-10-25',
+    duration: 11,
     progress: 100,
     status: TaskStatus.COMPLETED,
     rag: RAGStatus.GREEN,
@@ -50,8 +50,8 @@ const INITIAL_TASKS: Task[] = [
     id: 'EP-1.2',
     parentId: 'PF-1',
     name: 'EPIC: Auth Provider Integration',
-    startDate: '2023-11-06',
-    endDate: '2023-11-07',
+    startDate: '2025-10-26',
+    endDate: '2025-10-27',
     duration: 2,
     progress: 100,
     status: TaskStatus.COMPLETED,
@@ -68,9 +68,9 @@ const INITIAL_TASKS: Task[] = [
     id: 'PF-2',
     parentId: null,
     name: 'PF-02: Mobile Experience Rollout',
-    startDate: '2023-11-16',
-    endDate: '2023-12-20',
-    duration: 35,
+    startDate: '2025-11-11',
+    endDate: '2025-12-30',
+    duration: 50,
     progress: 15,
     status: TaskStatus.IN_PROGRESS,
     rag: RAGStatus.AMBER,
@@ -87,9 +87,9 @@ const INITIAL_TASKS: Task[] = [
     id: 'EP-2.1',
     parentId: 'PF-2',
     name: 'EPIC: iOS Application Development',
-    startDate: '2023-11-16',
-    endDate: '2023-11-30',
-    duration: 15,
+    startDate: '2025-11-11',
+    endDate: '2025-11-30',
+    duration: 20,
     progress: 30,
     status: TaskStatus.IN_PROGRESS,
     rag: RAGStatus.GREEN,
@@ -105,9 +105,9 @@ const INITIAL_TASKS: Task[] = [
     id: 'EP-2.2',
     parentId: 'PF-2',
     name: 'EPIC: Android Play Store Compliance',
-    startDate: '2023-12-01',
-    endDate: '2023-12-15',
-    duration: 15,
+    startDate: '2025-12-01',
+    endDate: '2025-12-25',
+    duration: 25,
     progress: 0,
     status: TaskStatus.NOT_STARTED,
     rag: RAGStatus.RED,
@@ -142,14 +142,13 @@ const App: React.FC = () => {
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
 
-  // Progressive Collapse Visualization
   const isSummaryMode = leftPanelWidth < 380;
   const isVerticalHeader = leftPanelWidth < 650;
   
   const columnVisibility = useMemo(() => ({
     rag: leftPanelWidth > 1150,
     done: leftPanelWidth > 1050,
-    float: leftPanelWidth > 950, // Added Float column
+    float: leftPanelWidth > 950,
     owner: leftPanelWidth > 850,
     atRisk: leftPanelWidth > 780,
     status: leftPanelWidth > 680,
@@ -189,7 +188,6 @@ const App: React.FC = () => {
     const totalDur = tasks.reduce((acc, t) => acc + t.duration, 0);
     const avg = totalDur > 0 ? tasks.reduce((acc, t) => acc + (t.progress * t.duration), 0) / totalDur : 0;
     
-    // Project float is the min float of paths ending at project end
     const rootTasks = tasks.filter(t => t.parentId === null);
     const projectFloat = rootTasks.length > 0 ? Math.max(...rootTasks.map(t => t.totalFloat || 0)) : 0;
 
@@ -213,6 +211,23 @@ const App: React.FC = () => {
         return identifyCriticalPath(propagateChanges(newTasks, id));
       }
       return identifyCriticalPath(rollupHierarchy(newTasks));
+    });
+  };
+
+  const handleJumpToToday = () => {
+    if (!rightPaneRef.current) return;
+    const bounds = getProjectBounds(tasks, zoomLevel);
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    
+    const pixelsPerDay = zoomLevel === ZoomLevel.DAYS ? 35 : zoomLevel === ZoomLevel.WEEKS ? 8 : 2.5;
+    const diffDays = (today.getTime() - bounds.start.getTime()) / (1000 * 60 * 60 * 24);
+    const todayX = Math.floor(diffDays * pixelsPerDay);
+    
+    const containerWidth = rightPaneRef.current.clientWidth;
+    rightPaneRef.current.scrollTo({
+      left: todayX - containerWidth / 2,
+      behavior: 'smooth'
     });
   };
 
@@ -400,6 +415,7 @@ const App: React.FC = () => {
     <div className={`flex flex-col h-screen overflow-hidden ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-white text-gray-900'}`}>
       <DashboardHeader 
         stats={stats} 
+        tasks={tasks}
         onAIAnalysis={handleAIAnalysis} 
         onJiraSync={() => alert('Jira Sync complete!')}
         isLoading={loading} 
@@ -410,11 +426,10 @@ const App: React.FC = () => {
         onToggleCriticalPath={() => setShowCriticalPath(!showCriticalPath)}
         zoomLevel={zoomLevel}
         onZoomChange={setZoomLevel}
+        onJumpToToday={handleJumpToToday}
       />
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
         <div className="flex w-full overflow-hidden relative">
-          
-          {/* Side-by-Side Left Panel */}
           <div 
             className="flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 shadow-sm relative overflow-hidden"
             style={{ width: leftPanelWidth }}
@@ -423,7 +438,6 @@ const App: React.FC = () => {
               <div className="w-8 shrink-0 flex items-center justify-center"></div>
               {!isSummaryMode && <div className="w-10 p-2 text-center shrink-0">#</div>}
               <div className="flex-1 p-2 min-w-0">Task</div>
-              
               {!isSummaryMode && (
                 <>
                   {columnVisibility.dates && (
@@ -440,7 +454,16 @@ const App: React.FC = () => {
                   {columnVisibility.pred && <div className="w-20 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Pred.</span></div>}
                   {columnVisibility.status && <div className="w-32 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Status</span></div>}
                   {columnVisibility.owner && <div className="w-24 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Owner</span></div>}
-                  {columnVisibility.atRisk && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Risk</span></div>}
+                  {columnVisibility.atRisk && (
+                    <>
+                      <div className="w-12 shrink-0 border-l-2 border-rose-500/50 dark:border-rose-600/50 flex items-end bg-rose-50/5 dark:bg-rose-950/5">
+                        <span className={headerLabelClass}>Risk</span>
+                      </div>
+                      <div className="w-12 shrink-0 border-l-2 border-amber-500/50 dark:border-amber-600/50 flex items-end bg-amber-50/5 dark:bg-amber-950/5">
+                        <span className={headerLabelClass}>MS</span>
+                      </div>
+                    </>
+                  )}
                   {columnVisibility.float && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Float</span></div>}
                   {columnVisibility.done && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Done</span></div>}
                   {columnVisibility.rag && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>RAG</span></div>}
@@ -486,7 +509,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Draggable Split Divider */}
           <div 
             onMouseDown={startResizing}
             className="w-1 h-full cursor-col-resize bg-gray-200 dark:bg-slate-800 hover:bg-blue-500 active:bg-blue-600 transition-colors z-40 flex-shrink-0 relative group"
@@ -496,7 +518,6 @@ const App: React.FC = () => {
              </div>
           </div>
 
-          {/* Timeline Panel - Responds to remaining space via flex-1 */}
           <div ref={rightPaneRef} onScroll={onScroll} className="flex-1 min-w-0 overflow-auto bg-white dark:bg-slate-950 relative custom-scrollbar">
             <Timeline tasks={visibleTasks} onTaskUpdate={handleUpdateTask} isDarkMode={isDarkMode} showCriticalPath={showCriticalPath} zoomLevel={zoomLevel} />
           </div>

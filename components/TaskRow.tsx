@@ -103,7 +103,6 @@ const TaskRow: React.FC<TaskRowProps> = ({
 
   const cycleRAG = (e: React.MouseEvent) => {
     e.stopPropagation();
-    // Only allow manual RAG cycling for leaf nodes
     if (isParentRow) return;
 
     const currentRAG = task.rag;
@@ -180,12 +179,10 @@ const TaskRow: React.FC<TaskRowProps> = ({
     [TaskStatus.BLOCKED]: 'fa-exclamation-circle text-rose-500',
   };
 
-  // Base background logic
   const rowBaseColor = isSelected 
     ? 'bg-blue-50/80 dark:bg-blue-900/20' 
     : isEven ? 'bg-white dark:bg-slate-900' : 'bg-gray-50/50 dark:bg-slate-900/40';
 
-  // "At Risk" highlight logic
   const riskColor = task.isAtRisk 
     ? (isDarkMode ? 'bg-red-900/10' : 'bg-red-50/70')
     : '';
@@ -390,14 +387,26 @@ const TaskRow: React.FC<TaskRowProps> = ({
       )}
 
       {columnVisibility.atRisk && (
-        <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
-          <input 
-            type="checkbox" 
-            checked={task.isAtRisk || false} 
-            onChange={(e) => onUpdate({ isAtRisk: e.target.checked })}
-            className="w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
-          />
-        </div>
+        <>
+          <div className="w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-rose-500/50 dark:border-rose-600/50 bg-rose-50/5 dark:bg-rose-950/5" title="At Risk">
+            <input 
+              type="checkbox" 
+              checked={task.isAtRisk || false} 
+              onChange={(e) => onUpdate({ isAtRisk: e.target.checked })}
+              className="w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+            />
+          </div>
+          <div className="w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-amber-500/50 dark:border-amber-600/50 bg-amber-50/5 dark:bg-amber-950/5" title="Is Milestone">
+            {!isParentRow && (
+              <input 
+                type="checkbox" 
+                checked={task.isMilestone || false} 
+                onChange={(e) => onUpdate({ isMilestone: e.target.checked })}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-yellow-600 focus:ring-yellow-500 cursor-pointer"
+              />
+            )}
+          </div>
+        </>
       )}
 
       {columnVisibility.float && (
