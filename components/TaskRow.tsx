@@ -5,7 +5,7 @@ import { calculateDuration, getEndDateFromDuration } from '../utils/ganttLogic';
 
 interface TaskRowProps {
   task: Task;
-  index: number;
+  hierarchyId: string;
   isSelected: boolean;
   allTasks: Task[];
   onSelect: () => void;
@@ -31,7 +31,7 @@ const STATUS_CONFIG = {
 
 const TaskRow: React.FC<TaskRowProps> = ({ 
   task, 
-  index, 
+  hierarchyId, 
   isSelected, 
   allTasks,
   onSelect, 
@@ -74,7 +74,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const depth = getDepth(task);
   const hasChildren = allTasks.some(t => t.parentId === task.id);
   const isParentRow = hasChildren;
-  const isEven = index % 2 === 0;
+  const isEven = hierarchyId.split('.').pop() === '0'; // placeholder logic, App.tsx uses index+1 logic
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
     if (!val || isParentRow) return;
@@ -191,7 +191,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
       onDragOver={(e) => onDragOver(e, task.id)}
       onDrop={(e) => onDrop(e, task.id)}
       className={`group flex border-b items-center text-xs transition-colors cursor-default h-[36px] dark:border-slate-800/80 relative
-        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40 z-[5]' : (isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950')}
+        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40 z-[5]' : (hierarchyId.includes('.') ? 'bg-white dark:bg-slate-950' : 'bg-gray-50/80 dark:bg-slate-900/50')}
         ${isParentRow ? 'font-semibold' : ''}
         ${isDragging ? 'opacity-30' : 'opacity-100'}
         ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
@@ -200,8 +200,8 @@ const TaskRow: React.FC<TaskRowProps> = ({
         <i className="fas fa-grip-vertical text-[10px]"></i>
       </div>
 
-      <div className="w-8 p-2 text-center text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
-        {index}
+      <div className="w-12 p-2 text-center text-slate-500 dark:text-slate-400 font-mono text-[10px] shrink-0 font-bold border-r border-gray-100/50 dark:border-slate-800/30">
+        {hierarchyId}
       </div>
       
       <div className="flex-1 p-1.5 flex items-center min-w-0" style={{ paddingLeft: `${depth * 20 + 4}px` }}>

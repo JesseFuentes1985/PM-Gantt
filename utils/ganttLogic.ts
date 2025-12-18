@@ -184,18 +184,32 @@ export const propagateChanges = (tasks: Task[], updatedTaskId: string): Task[] =
   return rollupHierarchy(newTasks);
 };
 
-export const getVisibleTasks = (tasks: Task[]): Task[] => {
-  const visible: Task[] = [];
-  const addVisible = (parentId: string | null) => {
+export interface VisibleTaskWithHierarchy {
+  task: Task;
+  hierarchyId: string;
+}
+
+/**
+ * Traverses the task tree to find visible tasks and assigns dot-notation hierarchical IDs.
+ */
+export const getVisibleTasks = (tasks: Task[]): VisibleTaskWithHierarchy[] => {
+  const visible: VisibleTaskWithHierarchy[] = [];
+  
+  const traverse = (parentId: string | null, prefix: string) => {
+    // We filter based on parentId and preserve the original array order
     const children = tasks.filter(t => t.parentId === parentId);
-    children.forEach(child => {
-      visible.push(child);
+    
+    children.forEach((child, index) => {
+      const hierarchyId = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
+      visible.push({ task: child, hierarchyId });
+      
       if (child.isExpanded) {
-        addVisible(child.id);
+        traverse(child.id, hierarchyId);
       }
     });
   };
-  addVisible(null);
+
+  traverse(null, "");
   return visible;
 };
 

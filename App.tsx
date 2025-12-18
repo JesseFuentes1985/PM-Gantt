@@ -142,7 +142,8 @@ const App: React.FC = () => {
     setTasks(prev => identifyCriticalPath(rollupHierarchy(prev)));
   }, []);
 
-  const visibleTasks = useMemo(() => getVisibleTasks(tasks), [tasks]);
+  const visibleTasksData = useMemo(() => getVisibleTasks(tasks), [tasks]);
+  const visibleTasks = useMemo(() => visibleTasksData.map(v => v.task), [visibleTasksData]);
 
   const stats: ProjectStats = useMemo(() => {
     const total = tasks.length;
@@ -225,7 +226,6 @@ const App: React.FC = () => {
     if (!sourceId || sourceId === targetId) return;
 
     setTasks(prev => {
-      // Find source task and all its descendants
       const groupToMoveIds = new Set<string>();
       const collectDescendants = (id: string) => {
         groupToMoveIds.add(id);
@@ -233,7 +233,6 @@ const App: React.FC = () => {
       };
       collectDescendants(sourceId);
 
-      // Don't allow dropping a task into one of its own descendants
       if (groupToMoveIds.has(targetId)) return prev;
 
       const itemsToMove = prev.filter(t => groupToMoveIds.has(t.id));
@@ -242,7 +241,6 @@ const App: React.FC = () => {
       const targetIndex = remainingItems.findIndex(t => t.id === targetId);
       if (targetIndex === -1) return prev;
 
-      // Insert the group after the target item's last descendant
       const lastDescendantIdx = findLastDescendantIndex(targetId, remainingItems);
       
       const newTasks = [...remainingItems];
@@ -289,7 +287,6 @@ const App: React.FC = () => {
 
   const handleJiraSync = () => {
     setLoading(true);
-    // Simulate Jira API Sync
     setTimeout(() => {
       setLoading(false);
       alert("Successfully synced with Jira Cloud. Updated 4 PFs and 12 Epics.");
@@ -366,11 +363,11 @@ const App: React.FC = () => {
       
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
         <div className="flex w-full overflow-hidden">
-          <div className="w-[914px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
+          <div className="w-[930px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
             <div className="flex bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800 text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider h-[63px] items-end pb-2 sticky top-0 z-30">
               <div className="w-8 flex items-center justify-center"></div>
-              <div className="w-8 p-2 text-center">#</div>
-              <div className="flex-1 p-2">Jira Task Name</div>
+              <div className="w-12 p-2 text-center shrink-0">#</div>
+              <div className="flex-1 p-2 min-w-0">Jira Task Name</div>
               <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
               <div className="w-32 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
               <div className="w-16 p-2 border-l border-gray-100 dark:border-slate-800 text-center">Dur.</div>
@@ -383,11 +380,11 @@ const App: React.FC = () => {
               onScroll={onScroll}
               className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white dark:bg-slate-900 transition-colors"
             >
-              {visibleTasks.map((task, idx) => (
+              {visibleTasksData.map(({ task, hierarchyId }) => (
                 <TaskRow 
                   key={task.id} 
                   task={task} 
-                  index={idx + 1}
+                  hierarchyId={hierarchyId}
                   isSelected={selectedTaskId === task.id}
                   allTasks={tasks}
                   onSelect={() => setSelectedTaskId(task.id)}
