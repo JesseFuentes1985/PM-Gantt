@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
 import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
+import { saveToDatabase, loadFromDatabase, exportProjectJSON, importProjectJSON, ProjectData } from './services/persistenceService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
 import Timeline from './components/Timeline';
@@ -63,75 +64,24 @@ const INITIAL_TASKS: Task[] = [
     isAtRisk: false,
     jiraType: 'EPIC',
     jiraId: 'PLAT-103'
-  },
-  {
-    id: 'PF-2',
-    parentId: null,
-    name: 'PF-02: Mobile Experience Rollout',
-    startDate: '2025-11-11',
-    endDate: '2025-12-30',
-    duration: 50,
-    progress: 15,
-    status: TaskStatus.IN_PROGRESS,
-    rag: RAGStatus.AMBER,
-    owner: 'Kyle Reese',
-    role: 'Project Manager',
-    dependencies: [{ predecessorId: 'PF-1', type: 'Finish-to-Start' as any, lagDays: 0 }],
-    isMilestone: false,
-    isExpanded: true,
-    isAtRisk: false,
-    jiraType: 'PF',
-    jiraId: 'MOB-201'
-  },
-  {
-    id: 'EP-2.1',
-    parentId: 'PF-2',
-    name: 'EPIC: iOS Application Development',
-    startDate: '2025-11-11',
-    endDate: '2025-11-30',
-    duration: 20,
-    progress: 30,
-    status: TaskStatus.IN_PROGRESS,
-    rag: RAGStatus.GREEN,
-    owner: 'Jane Dev',
-    role: 'Lead Developer',
-    dependencies: [],
-    isMilestone: false,
-    isAtRisk: false,
-    jiraType: 'EPIC',
-    jiraId: 'MOB-202'
-  },
-  {
-    id: 'EP-2.2',
-    parentId: 'PF-2',
-    name: 'EPIC: Android Play Store Compliance',
-    startDate: '2025-12-01',
-    endDate: '2025-12-25',
-    duration: 25,
-    progress: 0,
-    status: TaskStatus.NOT_STARTED,
-    rag: RAGStatus.RED,
-    owner: 'Jim Back',
-    role: 'Backend Dev',
-    dependencies: [{ predecessorId: 'EP-2.1', type: 'Finish-to-Start' as any, lagDays: 0 }],
-    isMilestone: false,
-    isAtRisk: true,
-    jiraType: 'EPIC',
-    jiraId: 'MOB-203'
   }
 ];
 
 const App: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [projectTitle, setProjectTitle] = useState('Untitled Project');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showAI, setShowAI] = useState(false);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>(ZoomLevel.DAYS);
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const saved = localStorage.getItem('gantt_left_panel_width');
@@ -157,14 +107,27 @@ const App: React.FC = () => {
     dates: leftPanelWidth > 420,
   }), [leftPanelWidth]);
 
+  // Load from database on mount
+  useEffect(() => {
+    const data = loadFromDatabase();
+    if (data) {
+      setTasks(identifyCriticalPath(rollupHierarchy(data.tasks)));
+      setProjectTitle(data.title || 'Untitled Project');
+      setLastSaved(data.lastUpdated);
+    }
+  }, []);
+
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
   useEffect(() => {
-    setTasks(prev => identifyCriticalPath(rollupHierarchy(prev)));
-  }, []);
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   const visibleTasksData = useMemo(() => getVisibleTasks(tasks), [tasks]);
   const visibleTasks = useMemo(() => visibleTasksData.map(v => v.task), [visibleTasksData]);
@@ -212,6 +175,37 @@ const App: React.FC = () => {
       }
       return identifyCriticalPath(rollupHierarchy(newTasks));
     });
+  };
+
+  const handleSaveToDB = async () => {
+    setIsSaving(true);
+    const lastUpdate = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const data: ProjectData = { tasks, title: projectTitle, lastUpdated: lastUpdate };
+    try {
+      await saveToDatabase(data);
+      setLastSaved(lastUpdate);
+      setNotification({ msg: "Project saved successfully", type: 'success' });
+    } catch (err) {
+      setNotification({ msg: "Failed to save project", type: 'error' });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleExport = () => {
+    exportProjectJSON({ tasks, title: projectTitle, lastUpdated: lastSaved || new Date().toISOString() });
+    setNotification({ msg: "Project exported", type: 'success' });
+  };
+
+  const handleImport = async (file: File) => {
+    try {
+      const data = await importProjectJSON(file);
+      setTasks(identifyCriticalPath(rollupHierarchy(data.tasks)));
+      setProjectTitle(data.title || 'Imported Project');
+      setNotification({ msg: "Project imported", type: 'success' });
+    } catch (err) {
+      setNotification({ msg: (err as Error).message, type: 'error' });
+    }
   };
 
   const handleJumpToToday = () => {
@@ -416,9 +410,16 @@ const App: React.FC = () => {
       <DashboardHeader 
         stats={stats} 
         tasks={tasks}
+        projectTitle={projectTitle}
+        onTitleChange={setProjectTitle}
         onAIAnalysis={handleAIAnalysis} 
         onJiraSync={() => alert('Jira Sync complete!')}
+        onSave={handleSaveToDB}
+        onExport={handleExport}
+        onImport={handleImport}
         isLoading={loading} 
+        isSaving={isSaving}
+        lastSaved={lastSaved}
         onAddTask={() => handleAddTask(null, false, true)} 
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
@@ -527,6 +528,18 @@ const App: React.FC = () => {
       {loading && (
         <div className="fixed inset-0 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100]">
           <div className="h-10 w-10 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+        </div>
+      )}
+      
+      {/* Persistent Notification System */}
+      {notification && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl shadow-2xl z-[100] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 border ${
+          notification.type === 'success' 
+            ? 'bg-emerald-600 border-emerald-500 text-white' 
+            : 'bg-rose-600 border-rose-500 text-white'
+        }`}>
+          <i className={`fas ${notification.type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}`}></i>
+          <span className="text-sm font-bold uppercase tracking-wide">{notification.msg}</span>
         </div>
       )}
     </div>
