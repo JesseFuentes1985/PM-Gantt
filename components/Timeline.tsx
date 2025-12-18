@@ -1,16 +1,32 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Task, DependencyType } from '../types';
+import { Task, DependencyType, TaskStatus, ZoomLevel } from '../types';
 import { addDays, calculateDuration, getEndDateFromDuration } from '../utils/ganttLogic';
 
 interface TimelineProps {
   tasks: Task[];
   onTaskUpdate: (id: string, updates: Partial<Task>) => void;
   isDarkMode?: boolean;
+  showCriticalPath?: boolean;
+  zoomLevel?: ZoomLevel;
 }
 
-const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) => {
-  const PIXELS_PER_DAY = 35;
+const Timeline: React.FC<TimelineProps> = ({ 
+  tasks, 
+  onTaskUpdate, 
+  isDarkMode, 
+  showCriticalPath = false,
+  zoomLevel = ZoomLevel.DAYS
+}) => {
+  const PIXELS_PER_DAY = useMemo(() => {
+    switch (zoomLevel) {
+      case ZoomLevel.DAYS: return 35;
+      case ZoomLevel.WEEKS: return 8;
+      case ZoomLevel.MONTHS: return 2.5;
+      default: return 35;
+    }
+  }, [zoomLevel]);
+
   const ROW_HEIGHT = 36;
   const HEADER_HEIGHT_MONTH = 26;
   const HEADER_HEIGHT_DAY = 36;
@@ -23,10 +39,12 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
     const ends = tasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
     const min = new Date(Math.min(...starts));
     const max = new Date(Math.max(...ends));
-    min.setDate(min.getDate() - 10); 
-    max.setDate(max.getDate() + 25); 
+    
+    const buffer = zoomLevel === ZoomLevel.DAYS ? 10 : zoomLevel === ZoomLevel.WEEKS ? 30 : 90;
+    min.setDate(min.getDate() - buffer); 
+    max.setDate(max.getDate() + buffer * 2); 
     return { start: min, end: max };
-  }, [tasks]);
+  }, [tasks, zoomLevel]);
 
   const days: Date[] = useMemo(() => {
     const list = [];
@@ -75,12 +93,33 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
     return Math.floor((diff / (1000 * 60 * 60 * 24)) * PIXELS_PER_DAY);
   };
 
+  const getStatusColor = (status: TaskStatus) => {
+    switch (status) {
+      case TaskStatus.COMPLETED: return 'bg-emerald-500';
+      case TaskStatus.IN_PROGRESS: return 'bg-blue-500';
+      case TaskStatus.ON_HOLD: return 'bg-orange-400';
+      case TaskStatus.BLOCKED: return 'bg-rose-600';
+      case TaskStatus.NOT_STARTED: return isDarkMode ? 'bg-slate-600' : 'bg-slate-300';
+      default: return 'bg-blue-500';
+    }
+  };
+
+  const getStatusIcon = (status: TaskStatus) => {
+    switch (status) {
+      case TaskStatus.COMPLETED: return 'fa-check';
+      case TaskStatus.IN_PROGRESS: return 'fa-spinner fa-spin';
+      case TaskStatus.ON_HOLD: return 'fa-pause';
+      case TaskStatus.BLOCKED: return 'fa-ban';
+      case TaskStatus.NOT_STARTED: return 'fa-clock';
+      default: return '';
+    }
+  };
+
   const handleMouseDown = (e: React.MouseEvent, taskId: string, type: 'move' | 'resize') => {
     e.stopPropagation();
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
     
-    // Rule: Parent rollup bars are non-schedulable/non-draggable
     const hasChildren = tasks.some(t => t.parentId === taskId);
     if (hasChildren) return;
 
@@ -131,7 +170,7 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dragState, tasks, onTaskUpdate]);
+  }, [dragState, tasks, onTaskUpdate, PIXELS_PER_DAY]);
 
   return (
     <div className={`relative inline-block select-none min-w-full font-sans transition-colors duration-200 ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
@@ -140,7 +179,7 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
           {months.map((m, i) => (
             <div 
               key={i} 
-              className="flex-shrink-0 border-r dark:border-slate-800 text-[10px] font-bold text-blue-800 dark:text-blue-400 flex items-center px-3 uppercase tracking-widest bg-blue-50/40 dark:bg-blue-900/10"
+              className="flex-shrink-0 border-r dark:border-slate-800 text-[10px] font-bold text-blue-800 dark:text-blue-400 flex items-center px-3 uppercase tracking-widest bg-blue-50/40 dark:bg-blue-900/10 whitespace-nowrap overflow-hidden"
               style={{ width: m.daysCount * PIXELS_PER_DAY }}
             >
               {m.label}
@@ -152,6 +191,14 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
             const isWeekend = day.getDay() === 0 || day.getDay() === 6;
             const isToday = new Date().toISOString().split('T')[0] === day.toISOString().split('T')[0];
             const isMon = day.getDay() === 1;
+            const isFirstOfMonth = day.getDate() === 1;
+
+            // Frequency for showing labels
+            let shouldShowLabel = false;
+            if (zoomLevel === ZoomLevel.DAYS) shouldShowLabel = true;
+            else if (zoomLevel === ZoomLevel.WEEKS) shouldShowLabel = isMon;
+            else if (zoomLevel === ZoomLevel.MONTHS) shouldShowLabel = isFirstOfMonth;
+
             return (
               <div 
                 key={i} 
@@ -160,12 +207,16 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
                   ${isToday ? 'bg-blue-50/50 dark:bg-blue-900/30' : ''}`} 
                 style={{ width: PIXELS_PER_DAY }}
               >
-                <span className={`font-bold ${isMon ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-slate-500'}`}>
-                  {day.toLocaleDateString('en-US', { weekday: 'narrow' })}
-                </span>
-                <span className={`text-[10px] font-medium ${isMon ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-slate-400'}`}>
-                  {day.getDate()}
-                </span>
+                {shouldShowLabel && (
+                  <>
+                    <span className={`font-bold leading-tight ${isMon || isFirstOfMonth ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-slate-500'}`}>
+                      {zoomLevel === ZoomLevel.DAYS ? day.toLocaleDateString('en-US', { weekday: 'narrow' }) : (zoomLevel === ZoomLevel.WEEKS ? 'W' : '')}
+                    </span>
+                    <span className={`text-[9px] font-medium leading-tight ${isMon || isFirstOfMonth ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-slate-400'}`}>
+                      {zoomLevel === ZoomLevel.MONTHS ? day.toLocaleDateString('en-US', { month: 'short' }) : day.getDate()}
+                    </span>
+                  </>
+                )}
               </div>
             );
           })}
@@ -174,22 +225,29 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
 
       <div className="relative">
         <div className="absolute inset-0 pointer-events-none flex h-full">
-          {days.map((day, i) => (
-            <div 
-              key={i} 
-              className={`border-r dark:border-slate-800 h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/20 dark:bg-slate-800/10' : ''}`} 
-              style={{ width: PIXELS_PER_DAY }}
-            />
-          ))}
+          {days.map((day, i) => {
+             const isMon = day.getDay() === 1;
+             const isFirst = day.getDate() === 1;
+             let showLine = zoomLevel === ZoomLevel.DAYS;
+             if (zoomLevel === ZoomLevel.WEEKS) showLine = isMon;
+             if (zoomLevel === ZoomLevel.MONTHS) showLine = isFirst;
+
+             return (
+              <div 
+                key={i} 
+                className={`${showLine ? 'border-r dark:border-slate-800' : ''} h-full ${day.getDay() === 0 || day.getDay() === 6 ? 'bg-gray-50/20 dark:bg-slate-800/10' : ''}`} 
+                style={{ width: PIXELS_PER_DAY }}
+              />
+            );
+          })}
         </div>
 
         <svg className="absolute inset-0 pointer-events-none w-full h-full z-10 overflow-visible">
           {tasks.map((task, idx) => 
-            task.dependencies.map((dep, dIdx) => {
+            task.dependencies.map((dep) => {
               const pred = tasks.find(t => t.id === dep.predecessorId);
               if (!pred) return null;
               
-              // Only draw dependencies between subtasks
               const predHasChildren = tasks.some(t => t.parentId === pred.id);
               const taskHasChildren = tasks.some(t => t.parentId === task.id);
               if (predHasChildren || taskHasChildren) return null;
@@ -202,16 +260,22 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
               const x2 = getOffset(task.startDate);
               const y2 = idx * ROW_HEIGHT + ROW_HEIGHT / 2;
 
+              const isLineCritical = showCriticalPath && task.isCritical && pred.isCritical;
+
               return (
                 <g key={`${task.id}-${dep.predecessorId}`}>
                   <path 
                     d={`M ${x1} ${y1} L ${x1+10} ${y1} L ${x1+10} ${y2} L ${x2} ${y2}`}
-                    stroke={task.isCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')}
-                    strokeWidth="1.2"
+                    stroke={isLineCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')}
+                    strokeWidth={isLineCritical ? "1.8" : "1.2"}
                     fill="none"
-                    strokeDasharray="3 2"
+                    strokeDasharray={isLineCritical ? "0" : "3 2"}
+                    className="transition-all duration-300"
                   />
-                  <polygon points={`${x2},${y2} ${x2-4},${y2-2.5} ${x2-4},${y2+2.5}`} fill={task.isCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')} />
+                  <polygon 
+                    points={`${x2},${y2} ${x2-4},${y2-2.5} ${x2-4},${y2+2.5}`} 
+                    fill={isLineCritical ? '#ef4444' : (isDarkMode ? '#334155' : '#94a3b8')} 
+                  />
                 </g>
               );
             })
@@ -219,10 +283,25 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
         </svg>
 
         <div className="relative z-10">
-          {tasks.map((task, idx) => {
+          {tasks.map((task) => {
             const startX = getOffset(task.startDate);
-            const barWidth = Math.max(8, task.duration * PIXELS_PER_DAY);
+            const barWidth = Math.max(2, task.duration * PIXELS_PER_DAY);
             const hasChildren = tasks.some(t => t.parentId === task.id);
+            const isCurrentlyCritical = showCriticalPath && task.isCritical;
+
+            const baseClasses = "absolute top-1/2 -translate-y-1/2 h-[22px] group transition-all duration-300 shadow-sm flex items-center px-0.5 overflow-hidden";
+            const interactionClasses = hasChildren ? "rounded-sm cursor-default" : "rounded-md cursor-grab active:cursor-grabbing";
+            
+            let colorClasses = "";
+            if (!task.isMilestone) {
+              if (hasChildren) {
+                colorClasses = isCurrentlyCritical ? "bg-red-800 dark:bg-red-600" : "bg-slate-800 dark:bg-slate-100";
+              } else {
+                colorClasses = isCurrentlyCritical ? "bg-red-500 border-2 border-red-700 scale-y-110 shadow-lg" : getStatusColor(task.status);
+              }
+            } else {
+              colorClasses = "rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
+            }
 
             return (
               <div 
@@ -230,27 +309,28 @@ const Timeline: React.FC<TimelineProps> = ({ tasks, onTaskUpdate, isDarkMode }) 
                 className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 ${hasChildren ? 'bg-gray-100 dark:bg-slate-800/60' : ''}`} 
                 style={{ height: ROW_HEIGHT }}
               >
-                {task.baselineStart && task.baselineEnd && (
-                  <div 
-                    className="absolute top-[85%] h-[2px] bg-gray-300/60 dark:bg-slate-700/60 rounded-full"
-                    style={{ left: getOffset(task.baselineStart), width: calculateDuration(task.baselineStart, task.baselineEnd) * PIXELS_PER_DAY }}
-                  />
-                )}
-
                 <div 
                   onMouseDown={(e) => handleMouseDown(e, task.id, 'move')}
-                  className={`absolute top-1/2 -translate-y-1/2 h-[20px] group transition-all shadow-sm 
-                    ${hasChildren ? 'bg-slate-800 dark:bg-slate-100 rounded-sm cursor-default' : 'cursor-grab active:cursor-grabbing'}
-                    ${!hasChildren && task.isCritical ? 'bg-red-500 rounded-md border border-red-600' : !hasChildren ? 'bg-blue-500 dark:bg-blue-600 rounded-md' : ''} 
-                    ${task.isMilestone ? 'rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md' : ''}
-                  `}
+                  className={`${baseClasses} ${interactionClasses} ${colorClasses}`}
                   style={{ left: startX, width: task.isMilestone ? 10 : barWidth }}
                 >
                   {!hasChildren && !task.isMilestone && (
-                    <div className="h-full bg-blue-700/30 dark:bg-blue-400/30 rounded-l-md pointer-events-none" style={{ width: `${task.progress}%` }} />
-                  )}
-                  {!hasChildren && !task.isMilestone && (
-                    <div onMouseDown={(e) => handleMouseDown(e, task.id, 'resize')} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-white/40 rounded-r-md" />
+                    <>
+                      <div className="h-full absolute left-0 top-0 bg-black/10 pointer-events-none" style={{ width: `${task.progress}%` }} />
+                      {zoomLevel === ZoomLevel.DAYS && (
+                        <div className="relative flex items-center gap-1.5 w-full overflow-hidden text-white/90">
+                          {barWidth > 20 && (
+                            <i className={`fas ${getStatusIcon(task.status)} text-[10px] shrink-0 opacity-80`} title={task.status}></i>
+                          )}
+                          {barWidth > 60 && (
+                            <span className="text-[8px] font-bold uppercase truncate tracking-tighter opacity-70">
+                              {task.status}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div onMouseDown={(e) => handleMouseDown(e, task.id, 'resize')} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-white/40 rounded-r-md z-10" />
+                    </>
                   )}
                   {hasChildren && (
                     <>

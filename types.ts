@@ -20,6 +20,12 @@ export enum DependencyType {
   SF = 'Start-to-Finish'
 }
 
+export enum ZoomLevel {
+  DAYS = 'Days',
+  WEEKS = 'Weeks',
+  MONTHS = 'Months'
+}
+
 export interface Dependency {
   predecessorId: string;
   type: DependencyType;
@@ -44,6 +50,8 @@ export interface Task {
   baselineEnd?: string;
   isExpanded?: boolean;
   isCritical?: boolean;
+  jiraId?: string;
+  jiraType?: 'PF' | 'EPIC' | 'STORY' | 'TASK';
 }
 
 export interface ProjectStats {

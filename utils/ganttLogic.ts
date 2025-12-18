@@ -161,11 +161,78 @@ export const getVisibleTasks = (tasks: Task[]): Task[] => {
   return visible;
 };
 
+/**
+ * Identifies tasks on the critical path.
+ * A task is critical if it is a leaf task determining the project end date,
+ * or if it is a predecessor to a critical task that "drives" its schedule.
+ * Parents are marked critical if they contain any critical subtasks.
+ */
 export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   if (tasks.length === 0) return [];
-  const projectEnd = new Date(Math.max(...tasks.map(t => new Date(t.endDate + 'T00:00:00').getTime()))).toISOString().split('T')[0];
-  return tasks.map(t => ({
-    ...t,
-    isCritical: t.endDate === projectEnd && (tasks.filter(child => child.parentId === t.id).length === 0)
-  }));
+
+  // Reset critical flag
+  const updatedTasks = tasks.map(t => ({ ...t, isCritical: false }));
+  
+  // Find project end date
+  const endDates = updatedTasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
+  const projectEnd = new Date(Math.max(...endDates)).toISOString().split('T')[0];
+
+  const criticalIds = new Set<string>();
+
+  // Helper to check if task has children
+  const isParent = (id: string) => updatedTasks.some(t => t.parentId === id);
+
+  // 1. Identify leaf tasks ending at the project end
+  updatedTasks.forEach(t => {
+    if (!isParent(t.id) && t.endDate === projectEnd) {
+      criticalIds.add(t.id);
+    }
+  });
+
+  // 2. Trace backwards through dependencies to find driving tasks
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const t of updatedTasks) {
+      if (criticalIds.has(t.id) || isParent(t.id)) continue;
+
+      // Find if this task is a driving predecessor for any already critical task
+      const isDriving = updatedTasks.some(succ => {
+        if (!criticalIds.has(succ.id)) return false;
+        
+        const dep = succ.dependencies.find(d => d.predecessorId === t.id);
+        if (!dep) return false;
+
+        if (dep.type === DependencyType.FS) {
+          // FS: predecessor end + 1 + lag == successor start
+          return addDays(t.endDate, 1 + dep.lagDays) === succ.startDate;
+        } else if (dep.type === DependencyType.SS) {
+          // SS: predecessor start + lag == successor start
+          return addDays(t.startDate, dep.lagDays) === succ.startDate;
+        }
+        return false;
+      });
+
+      if (isDriving) {
+        criticalIds.add(t.id);
+        changed = true;
+      }
+    }
+  }
+
+  // 3. Mark the tasks and roll up critical status to parents
+  const finalTasks = updatedTasks.map(t => {
+    const checkCritical = (id: string): boolean => {
+      if (criticalIds.has(id)) return true;
+      const children = updatedTasks.filter(c => c.parentId === id);
+      return children.some(c => checkCritical(c.id));
+    };
+
+    return {
+      ...t,
+      isCritical: checkCritical(t.id)
+    };
+  });
+
+  return finalTasks;
 };
