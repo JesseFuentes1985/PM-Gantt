@@ -76,6 +76,10 @@ const DashboardHeader: React.FC<HeaderProps> = ({
             <span className="text-[10px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter">Completed</span>
             <span className="text-sm font-black text-green-600 dark:text-green-500 leading-none">{stats.completedTasks}/{stats.totalTasks}</span>
           </div>
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter">Slack</span>
+            <span className="text-sm font-black text-indigo-600 dark:text-indigo-400 leading-none">{stats.totalProjectFloat || 0}d</span>
+          </div>
         </div>
 
         <div className="flex gap-2 items-center">

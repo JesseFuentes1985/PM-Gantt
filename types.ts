@@ -52,6 +52,7 @@ export interface Task {
   isExpanded?: boolean;
   isCritical?: boolean;
   isAtRisk?: boolean; // New manual risk flag
+  totalFloat?: number; // Calculated slack time in days
   jiraId?: string;
   jiraType?: 'PF' | 'EPIC' | 'STORY' | 'TASK';
 }
@@ -62,4 +63,5 @@ export interface ProjectStats {
   atRiskTasks: number;
   averageProgress: number;
   criticalPath: string[];
+  totalProjectFloat?: number; // Available project buffer
 }

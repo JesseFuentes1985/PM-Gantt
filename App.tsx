@@ -147,10 +147,11 @@ const App: React.FC = () => {
   const isVerticalHeader = leftPanelWidth < 650;
   
   const columnVisibility = useMemo(() => ({
-    rag: leftPanelWidth > 1100,
-    done: leftPanelWidth > 1000,
+    rag: leftPanelWidth > 1150,
+    done: leftPanelWidth > 1050,
+    float: leftPanelWidth > 950, // Added Float column
     owner: leftPanelWidth > 850,
-    atRisk: leftPanelWidth > 780, // New visibility threshold
+    atRisk: leftPanelWidth > 780,
     status: leftPanelWidth > 680,
     pred: leftPanelWidth > 600,
     duration: leftPanelWidth > 520,
@@ -184,16 +185,21 @@ const App: React.FC = () => {
   const stats: ProjectStats = useMemo(() => {
     const total = tasks.length;
     const completed = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-    // Count both RAG Red and manual Risk flag
     const atRisk = tasks.filter(t => t.rag === RAGStatus.RED || t.isAtRisk).length;
     const totalDur = tasks.reduce((acc, t) => acc + t.duration, 0);
     const avg = totalDur > 0 ? tasks.reduce((acc, t) => acc + (t.progress * t.duration), 0) / totalDur : 0;
+    
+    // Project float is the min float of paths ending at project end
+    const rootTasks = tasks.filter(t => t.parentId === null);
+    const projectFloat = rootTasks.length > 0 ? Math.max(...rootTasks.map(t => t.totalFloat || 0)) : 0;
+
     return {
       totalTasks: total,
       completedTasks: completed,
       atRiskTasks: atRisk,
       averageProgress: Math.round(avg),
-      criticalPath: tasks.filter(t => t.isCritical).map(t => t.id)
+      criticalPath: tasks.filter(t => t.isCritical).map(t => t.id),
+      totalProjectFloat: projectFloat
     };
   }, [tasks]);
 
@@ -435,6 +441,7 @@ const App: React.FC = () => {
                   {columnVisibility.status && <div className="w-32 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Status</span></div>}
                   {columnVisibility.owner && <div className="w-24 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Owner</span></div>}
                   {columnVisibility.atRisk && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Risk</span></div>}
+                  {columnVisibility.float && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Float</span></div>}
                   {columnVisibility.done && <div className="w-16 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>Done</span></div>}
                   {columnVisibility.rag && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>RAG</span></div>}
                 </>

@@ -54,6 +54,7 @@ export const createNewTask = (parentId: string | null, startDate: string, type: 
     isMilestone: false,
     isExpanded: true,
     isAtRisk: false,
+    totalFloat: 0,
     jiraType: type
   };
 };
@@ -90,17 +91,24 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
   const taskMap = new Map<string, Task>();
   updatedTasks.forEach(t => taskMap.set(t.id, t));
 
-  // First Pass: Update RAG for leaf nodes based on status
+  // First Pass: Update RAG for leaf nodes based on status and manual risk flag
   updatedTasks.forEach((task, idx) => {
     const hasChildren = updatedTasks.some(t => t.parentId === task.id);
     if (!hasChildren) {
       let forcedRAG = task.rag;
-      if (task.status === TaskStatus.BLOCKED) forcedRAG = RAGStatus.RED;
-      else if (task.status === TaskStatus.ON_HOLD) forcedRAG = RAGStatus.AMBER;
-      else if (task.status === TaskStatus.NOT_STARTED) forcedRAG = RAGStatus.GRAY;
-      else if (task.status === TaskStatus.COMPLETED) forcedRAG = RAGStatus.GREEN;
-      else if (task.status === TaskStatus.IN_PROGRESS) {
-          forcedRAG = (task.rag === RAGStatus.RED || task.rag === RAGStatus.AMBER) ? task.rag : RAGStatus.GREEN;
+      if (task.status === TaskStatus.BLOCKED) {
+        forcedRAG = RAGStatus.RED;
+      } else if (task.status === TaskStatus.ON_HOLD || task.isAtRisk) {
+        forcedRAG = RAGStatus.AMBER;
+      } else if (task.status === TaskStatus.COMPLETED) {
+        forcedRAG = RAGStatus.GREEN;
+      } else if (task.status === TaskStatus.NOT_STARTED) {
+        forcedRAG = RAGStatus.GRAY;
+      } else if (task.status === TaskStatus.IN_PROGRESS) {
+        // Maintain manual Amber if it was already set or is currently at risk
+        forcedRAG = (task.rag === RAGStatus.RED || task.rag === RAGStatus.AMBER || task.isAtRisk) ? RAGStatus.AMBER : RAGStatus.GREEN;
+        // But if it was Red manually, we keep it Red unless status changed
+        if (task.rag === RAGStatus.RED) forcedRAG = RAGStatus.RED;
       }
       updatedTasks[idx] = { ...task, rag: forcedRAG };
     }
@@ -114,6 +122,7 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
     const childStatuses = children.map(c => c.status);
     const childRAGs = children.map(c => c.rag);
 
+    // Rollup Status: Worst case logic
     let parentStatus = TaskStatus.NOT_STARTED;
     if (childStatuses.includes(TaskStatus.BLOCKED)) {
       parentStatus = TaskStatus.BLOCKED;
@@ -123,11 +132,17 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
       parentStatus = TaskStatus.IN_PROGRESS;
     }
 
+    // Rollup RAG: Severity hierarchy logic
     let parentRAG = RAGStatus.GRAY;
-    if (childRAGs.includes(RAGStatus.RED)) parentRAG = RAGStatus.RED;
-    else if (childRAGs.includes(RAGStatus.AMBER)) parentRAG = RAGStatus.AMBER;
-    else if (childRAGs.every(r => r === RAGStatus.GREEN)) parentRAG = RAGStatus.GREEN;
-    else if (childRAGs.some(r => r === RAGStatus.GREEN)) parentRAG = RAGStatus.GREEN;
+    if (childRAGs.includes(RAGStatus.RED)) {
+      parentRAG = RAGStatus.RED;
+    } else if (childRAGs.includes(RAGStatus.AMBER)) {
+      parentRAG = RAGStatus.AMBER;
+    } else if (childRAGs.some(r => r === RAGStatus.GREEN)) {
+      parentRAG = RAGStatus.GREEN;
+    } else if (childRAGs.every(r => r === RAGStatus.GRAY)) {
+      parentRAG = RAGStatus.GRAY;
+    }
 
     const childDates = children.map(c => new Date(c.startDate + 'T00:00:00').getTime());
     const childEndDates = children.map(c => new Date(c.endDate + 'T00:00:00').getTime());
@@ -227,8 +242,8 @@ export const getVisibleTasks = (tasks: Task[]): VisibleTaskWithHierarchy[] => {
 export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   if (tasks.length === 0) return [];
 
-  // Reset critical status
-  const updatedTasks = tasks.map(t => ({ ...t, isCritical: false }));
+  // Reset critical status and float
+  const updatedTasks = tasks.map(t => ({ ...t, isCritical: false, totalFloat: 0 }));
   
   // We only calculate CPM for leaf tasks (containers follow their children)
   const isParent = (id: string) => updatedTasks.some(t => t.parentId === id);
@@ -239,7 +254,6 @@ export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   // Project End Date (Latest EF)
   const endDates = leafTasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
   const maxEndTimestamp = Math.max(...endDates);
-  const projectEndStr = new Date(maxEndTimestamp).toISOString().split('T')[0];
 
   // Map for easy access and LF tracking
   const taskMap = new Map<string, Task>();
@@ -280,35 +294,51 @@ export const identifyCriticalPath = (tasks: Task[]): Task[] => {
     return lf;
   };
 
-  // Identify critical leaf tasks
+  // Identify critical leaf tasks and assign float
   const criticalLeafIds = new Set<string>();
+  const floatMap = new Map<string, number>();
+
   leafTasks.forEach(task => {
     const ef = new Date(task.endDate + 'T00:00:00').getTime();
     const lf = getLateFinish(task.id);
     
     // Total Float = LF - EF
-    // If Float is <= 0 (allowing for minor date string rounding), it's critical
-    const floatDays = (lf - ef) / (1000 * 60 * 60 * 24);
+    const floatDays = Math.round((lf - ef) / (1000 * 60 * 60 * 24));
+    floatMap.set(task.id, Math.max(0, floatDays));
+
     if (floatDays <= 0) {
       criticalLeafIds.add(task.id);
     }
   });
 
-  // Roll up criticality to parent tasks
-  // A parent is critical if any of its children are critical
+  // Roll up criticality and float to parent tasks
   const finalTasks = updatedTasks.map(t => {
     let isCritical = false;
+    let totalFloat = 0;
+
     if (criticalLeafIds.has(t.id)) {
       isCritical = true;
+      totalFloat = 0;
     } else if (isParent(t.id)) {
-      // Check if any descendant is critical
-      const checkDescendants = (pid: string): boolean => {
-        const children = updatedTasks.filter(c => c.parentId === pid);
-        return children.some(c => criticalLeafIds.has(c.id) || checkDescendants(c.id));
-      };
-      isCritical = checkDescendants(t.id);
+      const descendants = updatedTasks.filter(c => {
+         let curr = c;
+         while(curr.parentId) {
+            if(curr.parentId === t.id) return true;
+            const next = updatedTasks.find(p => p.id === curr.parentId);
+            if(!next) break;
+            curr = next;
+         }
+         return false;
+      });
+      const leafDescendants = descendants.filter(d => !isParent(d.id));
+      isCritical = leafDescendants.some(d => criticalLeafIds.has(d.id));
+      // Parent float is the minimum float of its leaf descendants
+      totalFloat = leafDescendants.length > 0 ? Math.min(...leafDescendants.map(d => floatMap.get(d.id) || 0)) : 0;
+    } else {
+      totalFloat = floatMap.get(t.id) || 0;
     }
-    return { ...t, isCritical };
+
+    return { ...t, isCritical, totalFloat };
   });
 
   return finalTasks;

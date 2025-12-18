@@ -1,5 +1,5 @@
 {
-  "name": "Gemini Gantt Pro",
+  "name": "Gantt sheet ",
   "description": "A professional-grade Gantt chart application featuring hierarchical task management, dependency logic, resource tracking, and integrated Gemini AI for schedule optimization and executive insights.",
   "requestFramePermissions": [
     "camera",

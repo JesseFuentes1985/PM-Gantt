@@ -27,8 +27,9 @@ interface TaskRowProps {
   columnVisibility: {
     rag: boolean;
     done: boolean;
+    float: boolean;
     owner: boolean;
-    atRisk: boolean; // Added
+    atRisk: boolean;
     status: boolean;
     pred: boolean;
     duration: boolean;
@@ -102,6 +103,9 @@ const TaskRow: React.FC<TaskRowProps> = ({
 
   const cycleRAG = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Only allow manual RAG cycling for leaf nodes
+    if (isParentRow) return;
+
     const currentRAG = task.rag;
     let nextRAG = RAGStatus.GREEN;
     if (currentRAG === RAGStatus.GREEN) nextRAG = RAGStatus.AMBER;
@@ -120,13 +124,18 @@ const TaskRow: React.FC<TaskRowProps> = ({
       const delayed = children.filter(c => c.rag === RAGStatus.AMBER).length;
       
       insights.push({ icon: 'fa-sitemap', text: `Roll-up of ${children.length} sub-items`, type: 'neutral' });
-      if (atRisk > 0) insights.push({ icon: 'fa-exclamation-triangle', text: `${atRisk} critical child risks detected`, type: 'error' });
-      if (delayed > 0) insights.push({ icon: 'fa-clock', text: `${delayed} sub-items currently delayed`, type: 'warn' });
+      if (atRisk > 0) insights.push({ icon: 'fa-exclamation-triangle', text: `${atRisk} critical subtask blocks detected`, type: 'error' });
+      if (delayed > 0) insights.push({ icon: 'fa-clock', text: `${delayed} sub-items currently at risk or on hold`, type: 'warn' });
+      if (atRisk === 0 && delayed === 0) insights.push({ icon: 'fa-check-circle', text: "All child paths are healthy", type: 'success' });
     } else {
       if (task.status === TaskStatus.BLOCKED) {
-        insights.push({ icon: 'fa-ban', text: "Manually set to BLOCKED", type: 'error' });
+        insights.push({ icon: 'fa-ban', text: "Status: BLOCKED (Critical)", type: 'error' });
       } else if (task.status === TaskStatus.ON_HOLD) {
-        insights.push({ icon: 'fa-pause', text: "Work is currently ON HOLD", type: 'warn' });
+        insights.push({ icon: 'fa-pause', text: "Status: ON HOLD (Amber)", type: 'warn' });
+      }
+
+      if (task.isAtRisk) {
+        insights.push({ icon: 'fa-flag', text: "Manually flagged 'At Risk' (Amber)", type: 'warn' });
       }
 
       const incompletePredecessors = task.dependencies
@@ -150,12 +159,8 @@ const TaskRow: React.FC<TaskRowProps> = ({
     const updates: Partial<Task> = { status: newStatus };
     if (newStatus === TaskStatus.COMPLETED) {
       updates.progress = 100;
-      updates.rag = RAGStatus.GREEN;
     } else if (newStatus === TaskStatus.NOT_STARTED) {
       updates.progress = 0;
-    }
-    if (newStatus === TaskStatus.BLOCKED) {
-      updates.rag = RAGStatus.RED;
     }
     onUpdate(updates);
   };
@@ -180,7 +185,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
     ? 'bg-blue-50/80 dark:bg-blue-900/20' 
     : isEven ? 'bg-white dark:bg-slate-900' : 'bg-gray-50/50 dark:bg-slate-900/40';
 
-  // "At Risk" highlight logic - subtle light red/pink
+  // "At Risk" highlight logic
   const riskColor = task.isAtRisk 
     ? (isDarkMode ? 'bg-red-900/10' : 'bg-red-50/70')
     : '';
@@ -197,7 +202,6 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const config = typeConfig[task.jiraType as keyof typeof typeConfig] || typeConfig.TASK;
   const insights = getRAGInsights();
 
-  // Smart tooltip positioning
   const isNearTop = index < 4;
   const tooltipPositionClass = isNearTop 
     ? "absolute top-full right-0 mt-3 z-[100] w-64 animate-in fade-in slide-in-from-top-2"
@@ -209,7 +213,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
         onClick={cycleRAG} 
         onMouseEnter={() => setShowRAGDetails(true)}
         onMouseLeave={() => setShowRAGDetails(false)}
-        className={`${sizeClass} rounded-full cursor-pointer transition-all hover:scale-125 shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${ragColors[task.rag]}`} 
+        className={`${sizeClass} rounded-full transition-all shadow-sm ring-1 ring-black/5 dark:ring-white/10 ${ragColors[task.rag]} ${isParentRow ? 'cursor-default' : 'cursor-pointer hover:scale-125'}`} 
       />
       {showRAGDetails && (
         <div className={`${tooltipPositionClass} bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg shadow-xl duration-200 pointer-events-none`}>
@@ -217,7 +221,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${ragColors[task.rag]}`}></div>
               <span className={`text-[10px] font-black uppercase tracking-widest ${task.rag === RAGStatus.RED ? 'text-rose-600' : task.rag === RAGStatus.AMBER ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {task.rag} STATUS
+                {task.rag} {isParentRow ? 'Roll-up' : 'Status'}
               </span>
             </div>
             <span className="text-[9px] text-gray-400 font-bold uppercase">{hierarchyId}</span>
@@ -234,9 +238,11 @@ const TaskRow: React.FC<TaskRowProps> = ({
               </div>
             ))}
           </div>
-          <div className="px-3 py-2 bg-gray-50 dark:bg-slate-900/50 rounded-b-lg border-t dark:border-slate-700">
-             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Click indicator to cycle health</p>
-          </div>
+          {!isParentRow && (
+            <div className="px-3 py-2 bg-gray-50 dark:bg-slate-900/50 rounded-b-lg border-t dark:border-slate-700">
+               <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Click indicator to cycle health</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -272,10 +278,12 @@ const TaskRow: React.FC<TaskRowProps> = ({
     );
   }
 
-  // Done percentage text color logic
   const doneTextColor = task.progress === 100 || task.status === TaskStatus.COMPLETED
     ? 'text-emerald-600 dark:text-emerald-500'
     : (isParentRow ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-500');
+
+  const floatDays = task.totalFloat || 0;
+  const floatTextColor = floatDays === 0 ? 'text-rose-600 dark:text-rose-500 font-black' : 'text-gray-400 dark:text-slate-500';
 
   return (
     <div 
@@ -389,6 +397,15 @@ const TaskRow: React.FC<TaskRowProps> = ({
             onChange={(e) => onUpdate({ isAtRisk: e.target.checked })}
             className="w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
           />
+        </div>
+      )}
+
+      {columnVisibility.float && (
+        <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
+          <div className={`flex flex-col items-center justify-center ${floatTextColor}`}>
+             <span className="text-[10px]">{floatDays}d</span>
+             {floatDays > 0 && <div className="w-1.5 h-1.5 rounded-full bg-blue-400/30 mt-0.5"></div>}
+          </div>
         </div>
       )}
 
