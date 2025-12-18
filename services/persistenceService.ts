@@ -11,11 +11,9 @@ export interface ProjectData {
 
 /**
  * Simulates an asynchronous database save operation.
- * In a real-world scenario, this would be an API call to a backend.
  */
 export const saveToDatabase = async (data: ProjectData): Promise<void> => {
   return new Promise((resolve, reject) => {
-    // Simulate network latency
     setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -49,6 +47,37 @@ export const exportProjectJSON = (data: ProjectData) => {
   const link = document.createElement('a');
   link.href = url;
   link.download = `gantt_project_${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+/**
+ * Exports task data to CSV format (Excel compatible).
+ */
+export const exportToCSV = (tasks: Task[], title: string) => {
+  const headers = ["ID", "Name", "Start Date", "End Date", "Duration", "Progress (%)", "Status", "RAG", "Owner", "At Risk", "Critical"];
+  const rows = tasks.map(t => [
+    t.id,
+    `"${t.name.replace(/"/g, '""')}"`,
+    t.startDate,
+    t.endDate,
+    t.duration,
+    t.progress,
+    t.status,
+    t.rag,
+    t.owner,
+    t.isAtRisk ? "Yes" : "No",
+    t.isCritical ? "Yes" : "No"
+  ]);
+
+  const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

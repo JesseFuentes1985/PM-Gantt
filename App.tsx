@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
 import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
-import { saveToDatabase, loadFromDatabase, exportProjectJSON, importProjectJSON, ProjectData } from './services/persistenceService';
+import { saveToDatabase, loadFromDatabase, exportProjectJSON, exportToCSV, importProjectJSON, ProjectData } from './services/persistenceService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
 import Timeline from './components/Timeline';
@@ -195,6 +195,11 @@ const App: React.FC = () => {
   const handleExport = () => {
     exportProjectJSON({ tasks, title: projectTitle, lastUpdated: lastSaved || new Date().toISOString() });
     setNotification({ msg: "Project exported", type: 'success' });
+  };
+
+  const handleExportExcel = () => {
+    exportToCSV(tasks, projectTitle);
+    setNotification({ msg: "Excel Export Complete", type: 'success' });
   };
 
   const handleImport = async (file: File) => {
@@ -416,6 +421,7 @@ const App: React.FC = () => {
         onJiraSync={() => alert('Jira Sync complete!')}
         onSave={handleSaveToDB}
         onExport={handleExport}
+        onExportExcel={handleExportExcel}
         onImport={handleImport}
         isLoading={loading} 
         isSaving={isSaving}
