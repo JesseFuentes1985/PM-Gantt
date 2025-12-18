@@ -124,6 +124,8 @@ const App: React.FC = () => {
   const [aiInsights, setAiInsights] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
 
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
@@ -200,6 +202,54 @@ const App: React.FC = () => {
       return identifyCriticalPath(rollupHierarchy(newTasks));
     });
     if (selectedTaskId === id) setSelectedTaskId(null);
+  };
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggedTaskId(id);
+    e.dataTransfer.setData('taskId', id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: string) => {
+    e.preventDefault();
+    if (draggedTaskId === id) return;
+    setDragTargetId(id);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    const sourceId = draggedTaskId;
+    setDraggedTaskId(null);
+    setDragTargetId(null);
+
+    if (!sourceId || sourceId === targetId) return;
+
+    setTasks(prev => {
+      // Find source task and all its descendants
+      const groupToMoveIds = new Set<string>();
+      const collectDescendants = (id: string) => {
+        groupToMoveIds.add(id);
+        prev.filter(t => t.parentId === id).forEach(child => collectDescendants(child.id));
+      };
+      collectDescendants(sourceId);
+
+      // Don't allow dropping a task into one of its own descendants
+      if (groupToMoveIds.has(targetId)) return prev;
+
+      const itemsToMove = prev.filter(t => groupToMoveIds.has(t.id));
+      const remainingItems = prev.filter(t => !groupToMoveIds.has(t.id));
+      
+      const targetIndex = remainingItems.findIndex(t => t.id === targetId);
+      if (targetIndex === -1) return prev;
+
+      // Insert the group after the target item's last descendant
+      const lastDescendantIdx = findLastDescendantIndex(targetId, remainingItems);
+      
+      const newTasks = [...remainingItems];
+      newTasks.splice(lastDescendantIdx + 1, 0, ...itemsToMove);
+
+      return identifyCriticalPath(rollupHierarchy(newTasks));
+    });
   };
 
   const handleAIDecompose = async (task: Task) => {
@@ -316,12 +366,13 @@ const App: React.FC = () => {
       
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
         <div className="flex w-full overflow-hidden">
-          <div className="w-[850px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
+          <div className="w-[882px] flex-shrink-0 flex flex-col border-r bg-white dark:bg-slate-900 dark:border-slate-800 z-20 shadow-lg relative">
             <div className="flex bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-800 text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wider h-[63px] items-end pb-2 sticky top-0 z-30">
-              <div className="w-10 p-2 text-center">#</div>
+              <div className="w-8 flex items-center justify-center"></div>
+              <div className="w-8 p-2 text-center">#</div>
               <div className="flex-1 p-2">Jira Task Name</div>
-              <div className="w-24 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
-              <div className="w-24 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
+              <div className="w-28 p-2 border-l border-gray-100 dark:border-slate-800">Start Date</div>
+              <div className="w-28 p-2 border-l border-gray-100 dark:border-slate-800">End Date</div>
               <div className="w-16 p-2 border-l border-gray-100 dark:border-slate-800 text-center">Dur.</div>
               <div className="w-20 p-2 border-l border-gray-100 dark:border-slate-800">Owner</div>
               <div className="w-14 p-2 border-l border-gray-100 dark:border-slate-800 text-right">Done</div>
@@ -345,6 +396,11 @@ const App: React.FC = () => {
                   onAIDecompose={() => handleAIDecompose(task)}
                   onAddSubtask={() => handleAddTask(task.id, true)}
                   onRemoveTask={() => handleRemoveTask(task.id)}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  isDragging={draggedTaskId === task.id}
+                  isDragTarget={dragTargetId === task.id}
                 />
               ))}
               <div 

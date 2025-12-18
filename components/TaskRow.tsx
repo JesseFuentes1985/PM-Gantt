@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Task, RAGStatus, TaskStatus } from '../types';
 import { calculateDuration, getEndDateFromDuration } from '../utils/ganttLogic';
 
@@ -14,13 +14,18 @@ interface TaskRowProps {
   onAIDecompose: () => void;
   onAddSubtask: () => void;
   onRemoveTask: () => void;
+  onDragStart: (e: React.DragEvent, id: string) => void;
+  onDragOver: (e: React.DragEvent, id: string) => void;
+  onDrop: (e: React.DragEvent, id: string) => void;
+  isDragging?: boolean;
+  isDragTarget?: boolean;
 }
 
 const STATUS_CONFIG = {
   [TaskStatus.NOT_STARTED]: { icon: 'fa-clock', color: 'text-slate-400', bg: 'bg-slate-100 dark:bg-slate-800' },
   [TaskStatus.IN_PROGRESS]: { icon: 'fa-spinner fa-spin', color: 'text-blue-500', bg: 'bg-blue-100 dark:bg-blue-900/30' },
   [TaskStatus.COMPLETED]: { icon: 'fa-check-circle', color: 'text-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-900/30' },
-  [TaskStatus.ON_HOLD]: { icon: 'fa-pause-circle', color: 'text-orange-400', bg: 'bg-orange-100 dark:bg-orange-900/30' },
+  [TaskStatus.ON_HOLD]: { icon: 'fa-pause-circle', color: 'text-amber-500', bg: 'bg-amber-100 dark:bg-amber-900/30' },
   [TaskStatus.BLOCKED]: { icon: 'fa-ban', color: 'text-rose-600', bg: 'bg-rose-100 dark:bg-rose-900/30' },
 };
 
@@ -34,7 +39,12 @@ const TaskRow: React.FC<TaskRowProps> = ({
   onUpdate, 
   onAIDecompose,
   onAddSubtask,
-  onRemoveTask
+  onRemoveTask,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  isDragging,
+  isDragTarget
 }) => {
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -87,24 +97,83 @@ const TaskRow: React.FC<TaskRowProps> = ({
     });
   };
 
-  const toggleInProgress = (e: React.MouseEvent) => {
+  const cycleRAG = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (task.status === TaskStatus.IN_PROGRESS) {
-      onUpdate({ status: TaskStatus.ON_HOLD });
-    } else {
-      const updates: Partial<Task> = { status: TaskStatus.IN_PROGRESS };
-      if (task.progress === 0) updates.progress = 10;
-      onUpdate(updates);
+    if (isParentRow) return; 
+
+    const currentRAG = task.rag;
+    let nextRAG = RAGStatus.GREEN;
+    if (currentRAG === RAGStatus.GREEN) nextRAG = RAGStatus.AMBER;
+    else if (currentRAG === RAGStatus.AMBER) nextRAG = RAGStatus.RED;
+    else if (currentRAG === RAGStatus.RED) nextRAG = RAGStatus.GRAY;
+    else if (currentRAG === RAGStatus.GRAY) nextRAG = RAGStatus.GREEN;
+
+    onUpdate({ rag: nextRAG });
+  };
+
+  const rollUpSummary = useMemo(() => {
+    if (!isParentRow) return null;
+    
+    const getChildrenRecursive = (parentId: string): Task[] => {
+      let results: Task[] = [];
+      const children = allTasks.filter(t => t.parentId === parentId);
+      children.forEach(child => {
+        const grandChildren = allTasks.filter(t => t.parentId === child.id);
+        if (grandChildren.length === 0) {
+          results.push(child);
+        } else {
+          results = results.concat(getChildrenRecursive(child.id));
+        }
+      });
+      return results;
+    };
+
+    const leaves = getChildrenRecursive(task.id);
+    const counts = {
+      [RAGStatus.RED]: leaves.filter(l => l.rag === RAGStatus.RED).length,
+      [RAGStatus.AMBER]: leaves.filter(l => l.rag === RAGStatus.AMBER).length,
+      [RAGStatus.GREEN]: leaves.filter(l => l.rag === RAGStatus.GREEN).length,
+      [RAGStatus.GRAY]: leaves.filter(l => l.rag === RAGStatus.GRAY).length,
+    };
+
+    let reason = "All subtasks on track.";
+    if (counts[RAGStatus.RED] > 0) reason = `Red – Blocked because ${counts[RAGStatus.RED]} subtasks are Red.`;
+    else if (counts[RAGStatus.AMBER] > 0) reason = `Amber – At risk because ${counts[RAGStatus.AMBER]} subtasks are Amber.`;
+    else if (counts[RAGStatus.GRAY] > 0 && counts[RAGStatus.GREEN] === 0) reason = "Gray – All subtasks are not started.";
+
+    return { counts, reason };
+  }, [isParentRow, task.id, allTasks]);
+
+  const getRAGInfo = (rag: RAGStatus) => {
+    switch (rag) {
+      case RAGStatus.GREEN: 
+        return { 
+          color: 'bg-green-500', 
+          label: 'Green', 
+          desc: isParentRow ? (rollUpSummary?.reason || 'On Track') : 'Green – Healthy progress' 
+        };
+      case RAGStatus.AMBER: 
+        return { 
+          color: 'bg-amber-500', 
+          label: 'Amber', 
+          desc: isParentRow ? (rollUpSummary?.reason || 'At Risk') : 'Amber – At risk of schedule slip' 
+        };
+      case RAGStatus.RED: 
+        return { 
+          color: 'bg-rose-600', 
+          label: 'Red', 
+          desc: isParentRow ? (rollUpSummary?.reason || 'Blocked') : 'Red – Blocked due to dependency' 
+        };
+      case RAGStatus.GRAY:
+        return {
+          color: 'bg-gray-400 dark:bg-slate-600',
+          label: 'Gray',
+          desc: isParentRow ? (rollUpSummary?.reason || 'Not Started') : 'Gray – Not started'
+        };
     }
   };
 
-  const getRAGColor = (rag: RAGStatus) => {
-    switch (rag) {
-      case RAGStatus.GREEN: return 'bg-green-500';
-      case RAGStatus.AMBER: return 'bg-yellow-500';
-      case RAGStatus.RED: return 'bg-red-500';
-    }
-  };
+  const ragInfo = getRAGInfo(task.rag);
 
   const getJiraBadge = (type: string | undefined) => {
     switch (type) {
@@ -117,15 +186,25 @@ const TaskRow: React.FC<TaskRowProps> = ({
   return (
     <div 
       onClick={onSelect}
-      className={`group flex border-b items-center text-xs transition-colors cursor-default h-[36px] dark:border-slate-800/80
-        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40' : (isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950')}
-        ${isParentRow ? 'font-semibold' : ''}`}
+      draggable
+      onDragStart={(e) => onDragStart(e, task.id)}
+      onDragOver={(e) => onDragOver(e, task.id)}
+      onDrop={(e) => onDrop(e, task.id)}
+      className={`group flex border-b items-center text-xs transition-colors cursor-default h-[36px] dark:border-slate-800/80 relative
+        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40 z-[5]' : (isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950')}
+        ${isParentRow ? 'font-semibold' : ''}
+        ${isDragging ? 'opacity-30' : 'opacity-100'}
+        ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
     >
-      <div className="w-10 p-2 text-center text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
+      <div className="w-8 flex items-center justify-center text-gray-300 dark:text-slate-600 cursor-grab active:cursor-grabbing hover:text-gray-500 dark:hover:text-slate-400 transition-colors">
+        <i className="fas fa-grip-vertical text-[10px]"></i>
+      </div>
+
+      <div className="w-8 p-2 text-center text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
         {index}
       </div>
       
-      <div className="flex-1 p-1.5 flex items-center min-w-0" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
+      <div className="flex-1 p-1.5 flex items-center min-w-0" style={{ paddingLeft: `${depth * 20 + 4}px` }}>
         <div className="flex items-center gap-1 shrink-0">
           <button 
             onClick={(e) => { e.stopPropagation(); onToggle(); }} 
@@ -139,15 +218,15 @@ const TaskRow: React.FC<TaskRowProps> = ({
           {!isParentRow && (
             <div className="flex items-center gap-1.5 shrink-0 mr-1">
               <button
-                onClick={toggleInProgress}
-                title={task.status === TaskStatus.IN_PROGRESS ? "Mark as On Hold" : "Start Task"}
+                onClick={(e) => { e.stopPropagation(); onUpdate({ status: task.status === TaskStatus.IN_PROGRESS ? TaskStatus.ON_HOLD : TaskStatus.IN_PROGRESS }); }}
+                title={task.status === TaskStatus.IN_PROGRESS ? "Pause Task" : "Resume Task"}
                 className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                   task.status === TaskStatus.IN_PROGRESS 
-                  ? 'bg-blue-500 text-white animate-pulse' 
+                  ? 'bg-blue-500 text-white shadow-sm' 
                   : 'bg-gray-100 dark:bg-slate-800 text-gray-400 hover:text-blue-500'
                 }`}
               >
-                <i className={`fas ${task.status === TaskStatus.IN_PROGRESS ? 'fa-pause' : 'fa-play'} text-[8px]`}></i>
+                <i className={`fas ${task.status === TaskStatus.IN_PROGRESS ? 'fa-pause' : 'fa-play'} text-[7px]`}></i>
               </button>
               
               <div className="relative" ref={dropdownRef}>
@@ -159,7 +238,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
                 </button>
 
                 {isStatusOpen && (
-                  <div className="absolute top-full left-0 mt-1 w-40 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg shadow-xl z-50 overflow-hidden py-1 transform origin-top-left transition-all">
+                  <div className="absolute top-full left-0 mt-1 w-40 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-lg shadow-xl z-[100] overflow-hidden py-1">
                     {Object.values(TaskStatus).map((status) => (
                       <button
                         key={status}
@@ -215,17 +294,10 @@ const TaskRow: React.FC<TaskRowProps> = ({
           >
             <i className="fas fa-minus-circle text-[10px]"></i>
           </button>
-          <button 
-            onClick={(e) => { e.stopPropagation(); onAIDecompose(); }}
-            className="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 p-1 rounded hover:bg-indigo-100/50 dark:hover:bg-indigo-900/20"
-            title="Jira AI Decomposition"
-          >
-            <i className="fas fa-wand-magic-sparkles text-[10px]"></i>
-          </button>
         </div>
       </div>
 
-      <div className="w-24 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
+      <div className="w-28 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
         <input 
           type="date"
           value={task.startDate}
@@ -236,7 +308,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
         />
       </div>
 
-      <div className="w-24 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
+      <div className="w-28 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
         <input 
           type="date"
           value={task.endDate}
@@ -259,8 +331,14 @@ const TaskRow: React.FC<TaskRowProps> = ({
         />
       </div>
 
-      <div className="w-20 p-2 border-l border-gray-100 dark:border-slate-800/80 truncate text-gray-500 dark:text-slate-400 text-[10px] shrink-0">
-        {task.owner}
+      <div className="w-20 p-1 border-l border-gray-100 dark:border-slate-800/80 shrink-0">
+        <input 
+          value={task.owner} 
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onUpdate({ owner: e.target.value })}
+          className="bg-transparent border-none focus:ring-1 focus:ring-blue-300 dark:focus:ring-blue-700 rounded px-1 w-full truncate text-[10px] placeholder-gray-300 dark:placeholder-slate-700 dark:text-slate-400 font-medium"
+          placeholder="Owner..."
+        />
       </div>
 
       <div className="w-14 p-2 border-l border-gray-100 dark:border-slate-800/80 text-right text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
@@ -276,8 +354,36 @@ const TaskRow: React.FC<TaskRowProps> = ({
         />
       </div>
 
-      <div className="w-10 p-2 border-l border-gray-100 dark:border-slate-800/80 flex justify-center shrink-0">
-        <div className={`w-2.5 h-2.5 rounded-full ${getRAGColor(task.rag)} shadow-sm`}></div>
+      <div className="w-10 p-2 border-l border-gray-100 dark:border-slate-800/80 flex justify-center shrink-0 relative group/rag overflow-visible">
+        <div 
+          onClick={cycleRAG}
+          className={`w-3.5 h-3.5 rounded-full ${ragInfo.color} shadow-sm transition-transform ${!isParentRow ? 'cursor-pointer hover:scale-125' : 'cursor-help'}`}
+        ></div>
+        
+        {/* Hover Tooltip - Repositioned to the LEFT of the dot to avoid all clipping issues */}
+        <div className="absolute right-full top-1/2 -translate-y-1/2 mr-3 hidden group-hover/rag:flex z-[9999] pointer-events-none items-center">
+          <div className="bg-slate-900 text-white text-[11px] px-3 py-2 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.6)] whitespace-nowrap flex flex-col items-center border border-white/10 ring-1 ring-black/50">
+            <span className="font-black text-[10px] uppercase tracking-widest border-b border-white/10 w-full text-center pb-1.5 mb-1.5 flex items-center justify-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${ragInfo.color}`}></div>
+              {ragInfo.label} Status
+            </span>
+            <div className="flex flex-col gap-1 w-full text-center px-1">
+              <span className="font-medium whitespace-normal max-w-[200px] leading-tight text-white/90">
+                {ragInfo.desc}
+              </span>
+              {isParentRow && rollUpSummary && (
+                <div className="mt-2 flex items-center justify-center gap-2 border-t border-white/10 pt-1.5 text-[10px] font-bold">
+                  <span className="text-rose-400">{rollUpSummary.counts[RAGStatus.RED]} Red</span>
+                  <span className="text-amber-400">{rollUpSummary.counts[RAGStatus.AMBER]} Amb</span>
+                  <span className="text-emerald-400">{rollUpSummary.counts[RAGStatus.GREEN]} Grn</span>
+                  <span className="text-gray-400">{rollUpSummary.counts[RAGStatus.GRAY]} Gry</span>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Tooltip arrow pointing RIGHT towards the RAG dot */}
+          <div className="border-[6px] border-transparent border-l-slate-900 translate-x-[-1px]"></div>
+        </div>
       </div>
     </div>
   );

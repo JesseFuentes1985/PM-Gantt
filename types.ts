@@ -10,7 +10,8 @@ export enum TaskStatus {
 export enum RAGStatus {
   GREEN = 'Green',
   AMBER = 'Amber',
-  RED = 'Red'
+  RED = 'Red',
+  GRAY = 'Gray'
 }
 
 export enum DependencyType {

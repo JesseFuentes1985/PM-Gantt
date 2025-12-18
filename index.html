@@ -49,6 +49,24 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #94a3b8;
   }
+
+  /* Style the native date picker calendar icon to be dark grey */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(0.3) sepia(0) saturate(0) hue-rotate(0deg) brightness(0.6);
+    opacity: 0.6;
+    transition: opacity 0.2s;
+  }
+  
+  input[type="date"]:hover::-webkit-calendar-picker-indicator {
+    opacity: 1;
+  }
+
+  /* Ensure dark mode support for the indicator while keeping it dark grey as requested */
+  .dark input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.8) brightness(0.4);
+    opacity: 0.8;
+  }
 </style>
 </head>
 <body class="bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-100 font-sans transition-colors duration-200">

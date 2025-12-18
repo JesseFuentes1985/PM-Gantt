@@ -31,7 +31,7 @@ export const createNewTask = (parentId: string | null, startDate: string): Task 
     duration: 5,
     progress: 0,
     status: TaskStatus.NOT_STARTED,
-    rag: RAGStatus.GREEN,
+    rag: RAGStatus.GRAY,
     owner: "Unassigned",
     role: "Contributor",
     dependencies: [],
@@ -41,20 +41,37 @@ export const createNewTask = (parentId: string | null, startDate: string): Task 
 };
 
 /**
- * Recalculates parent dates bottom-up.
+ * Recalculates parent dates and statuses bottom-up.
  * Parent start = min(children start)
  * Parent end = max(children end)
+ * Parent RAG = max criticality of children (Red > Amber > Green > Gray)
  */
 export const rollupHierarchy = (tasks: Task[]): Task[] => {
   const updatedTasks = [...tasks];
   const taskMap = new Map<string, Task>();
   updatedTasks.forEach(t => taskMap.set(t.id, t));
 
+  // Step 1: Enforce status-based RAG on leaf nodes
+  updatedTasks.forEach((task, idx) => {
+    const hasChildren = updatedTasks.some(t => t.parentId === task.id);
+    if (!hasChildren) {
+      let forcedRAG = task.rag;
+      if (task.status === TaskStatus.BLOCKED) forcedRAG = RAGStatus.RED;
+      else if (task.status === TaskStatus.ON_HOLD) forcedRAG = RAGStatus.AMBER;
+      else if (task.status === TaskStatus.NOT_STARTED) forcedRAG = RAGStatus.GRAY;
+      else if (task.status === TaskStatus.COMPLETED) forcedRAG = RAGStatus.GREEN;
+      // In Progress allows manual RAG but defaults to Green if it was Gray
+      else if (task.status === TaskStatus.IN_PROGRESS && forcedRAG === RAGStatus.GRAY) forcedRAG = RAGStatus.GREEN;
+      
+      updatedTasks[idx] = { ...task, rag: forcedRAG };
+    }
+  });
+
   const processNode = (taskId: string) => {
     const children = updatedTasks.filter(t => t.parentId === taskId);
     if (children.length === 0) return;
 
-    // Process children first
+    // Process children first (bottom-up)
     children.forEach(child => processNode(child.id));
 
     const parent = taskMap.get(taskId);
@@ -71,26 +88,50 @@ export const rollupHierarchy = (tasks: Task[]): Task[] => {
       ? children.reduce((acc, c) => acc + (c.progress * c.duration), 0) / totalDuration 
       : 0;
 
+    // RAG Roll-up Logic: Red > Amber > Green > Gray
+    let parentRAG = RAGStatus.GRAY;
+    if (children.some(c => c.rag === RAGStatus.RED)) {
+      parentRAG = RAGStatus.RED;
+    } else if (children.some(c => c.rag === RAGStatus.AMBER)) {
+      parentRAG = RAGStatus.AMBER;
+    } else if (children.some(c => c.rag === RAGStatus.GREEN)) {
+      parentRAG = RAGStatus.GREEN;
+    }
+
+    // Status Roll-up Logic
+    let parentStatus = TaskStatus.NOT_STARTED;
+    if (children.every(c => c.status === TaskStatus.COMPLETED)) {
+      parentStatus = TaskStatus.COMPLETED;
+    } else if (children.some(c => c.status === TaskStatus.BLOCKED)) {
+      parentStatus = TaskStatus.BLOCKED;
+    } else if (children.some(c => c.status === TaskStatus.IN_PROGRESS || c.status === TaskStatus.COMPLETED)) {
+      parentStatus = TaskStatus.IN_PROGRESS;
+    } else if (children.some(c => c.status === TaskStatus.ON_HOLD)) {
+      parentStatus = TaskStatus.ON_HOLD;
+    }
+
     const parentIdx = updatedTasks.findIndex(t => t.id === taskId);
     updatedTasks[parentIdx] = {
       ...updatedTasks[parentIdx],
       startDate: minStart,
       endDate: maxEnd,
       duration: calculateDuration(minStart, maxEnd),
-      progress: Math.round(avgProgress)
+      progress: Math.round(avgProgress),
+      rag: parentRAG,
+      status: parentStatus
     };
     taskMap.set(taskId, updatedTasks[parentIdx]);
   };
 
-  const rootParents = updatedTasks.filter(t => t.parentId === null);
-  rootParents.forEach(root => processNode(root.id));
+  // Find root level tasks and trigger roll-up
+  const rootIds = new Set(updatedTasks.filter(t => t.parentId === null).map(t => t.id));
+  rootIds.forEach(id => processNode(id));
 
   return updatedTasks;
 };
 
 /**
  * Propagates date changes to successors.
- * Strict rule: Parent tasks do not participate in dependency chains.
  */
 export const propagateChanges = (tasks: Task[], updatedTaskId: string): Task[] => {
   let newTasks = [...tasks];
@@ -105,15 +146,12 @@ export const propagateChanges = (tasks: Task[], updatedTaskId: string): Task[] =
     const currentTask = newTasks.find(t => t.id === currentId);
     if (!currentTask) continue;
 
-    // Rule: Parent tasks cannot push successors. If current task is a parent, it shouldn't push.
-    // However, rollup handles parent movement. Subtasks are the units that push other subtasks.
     const isParent = newTasks.some(t => t.parentId === currentId);
     if (isParent) continue;
 
     const successors = newTasks.filter(t => t.dependencies.some(d => d.predecessorId === currentId));
 
     successors.forEach(succ => {
-      // Rule: Ignore dependencies if the successor is a parent (summary task)
       const isSuccParent = newTasks.some(t => t.parentId === succ.id);
       if (isSuccParent) return;
 
@@ -163,40 +201,30 @@ export const getVisibleTasks = (tasks: Task[]): Task[] => {
 
 /**
  * Identifies tasks on the critical path.
- * A task is critical if it is a leaf task determining the project end date,
- * or if it is a predecessor to a critical task that "drives" its schedule.
- * Parents are marked critical if they contain any critical subtasks.
  */
 export const identifyCriticalPath = (tasks: Task[]): Task[] => {
   if (tasks.length === 0) return [];
 
-  // Reset critical flag
   const updatedTasks = tasks.map(t => ({ ...t, isCritical: false }));
   
-  // Find project end date
   const endDates = updatedTasks.map(t => new Date(t.endDate + 'T00:00:00').getTime());
   const projectEnd = new Date(Math.max(...endDates)).toISOString().split('T')[0];
 
   const criticalIds = new Set<string>();
-
-  // Helper to check if task has children
   const isParent = (id: string) => updatedTasks.some(t => t.parentId === id);
 
-  // 1. Identify leaf tasks ending at the project end
   updatedTasks.forEach(t => {
     if (!isParent(t.id) && t.endDate === projectEnd) {
       criticalIds.add(t.id);
     }
   });
 
-  // 2. Trace backwards through dependencies to find driving tasks
   let changed = true;
   while (changed) {
     changed = false;
     for (const t of updatedTasks) {
       if (criticalIds.has(t.id) || isParent(t.id)) continue;
 
-      // Find if this task is a driving predecessor for any already critical task
       const isDriving = updatedTasks.some(succ => {
         if (!criticalIds.has(succ.id)) return false;
         
@@ -204,10 +232,8 @@ export const identifyCriticalPath = (tasks: Task[]): Task[] => {
         if (!dep) return false;
 
         if (dep.type === DependencyType.FS) {
-          // FS: predecessor end + 1 + lag == successor start
           return addDays(t.endDate, 1 + dep.lagDays) === succ.startDate;
         } else if (dep.type === DependencyType.SS) {
-          // SS: predecessor start + lag == successor start
           return addDays(t.startDate, dep.lagDays) === succ.startDate;
         }
         return false;
@@ -220,7 +246,6 @@ export const identifyCriticalPath = (tasks: Task[]): Task[] => {
     }
   }
 
-  // 3. Mark the tasks and roll up critical status to parents
   const finalTasks = updatedTasks.map(t => {
     const checkCritical = (id: string): boolean => {
       if (criticalIds.has(id)) return true;
