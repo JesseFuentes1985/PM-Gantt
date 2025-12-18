@@ -283,11 +283,12 @@ const Timeline: React.FC<TimelineProps> = ({
         </svg>
 
         <div className="relative z-10">
-          {tasks.map((task) => {
+          {tasks.map((task, idx) => {
             const startX = getOffset(task.startDate);
             const barWidth = Math.max(2, task.duration * PIXELS_PER_DAY);
             const hasChildren = tasks.some(t => t.parentId === task.id);
             const isCurrentlyCritical = showCriticalPath && task.isCritical;
+            const isEven = (idx + 1) % 2 === 0;
 
             const baseClasses = "absolute top-1/2 -translate-y-1/2 h-[22px] group transition-all duration-300 shadow-sm flex items-center px-0.5 overflow-hidden";
             const interactionClasses = hasChildren ? "rounded-sm cursor-default" : "rounded-md cursor-grab active:cursor-grabbing";
@@ -306,7 +307,7 @@ const Timeline: React.FC<TimelineProps> = ({
             return (
               <div 
                 key={task.id} 
-                className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 ${hasChildren ? 'bg-gray-100 dark:bg-slate-800/60' : ''}`} 
+                className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 transition-colors ${isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950'}`} 
                 style={{ height: ROW_HEIGHT }}
               >
                 <div 

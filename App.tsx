@@ -188,6 +188,20 @@ const App: React.FC = () => {
     return last;
   };
 
+  const handleRemoveTask = (id: string) => {
+    setTasks(prev => {
+      const toRemove = new Set<string>();
+      const collectDescendants = (parentId: string) => {
+        toRemove.add(parentId);
+        prev.filter(t => t.parentId === parentId).forEach(child => collectDescendants(child.id));
+      };
+      collectDescendants(id);
+      const newTasks = prev.filter(t => !toRemove.has(t.id));
+      return identifyCriticalPath(rollupHierarchy(newTasks));
+    });
+    if (selectedTaskId === id) setSelectedTaskId(null);
+  };
+
   const handleAIDecompose = async (task: Task) => {
     setLoading(true);
     try {
@@ -330,6 +344,7 @@ const App: React.FC = () => {
                   onUpdate={(updates) => handleUpdateTask(task.id, updates)}
                   onAIDecompose={() => handleAIDecompose(task)}
                   onAddSubtask={() => handleAddTask(task.id, true)}
+                  onRemoveTask={() => handleRemoveTask(task.id)}
                 />
               ))}
               <div 
@@ -338,9 +353,6 @@ const App: React.FC = () => {
               >
                 <i className="fas fa-plus-circle ml-8"></i> Add Feature (PF)
               </div>
-              {Array.from({length: 25}).map((_, i) => (
-                <div key={i} className="border-b h-[36px] bg-gray-50/5 dark:bg-slate-900/50 dark:border-slate-800/50" />
-              ))}
             </div>
           </div>
 
@@ -356,7 +368,6 @@ const App: React.FC = () => {
               showCriticalPath={showCriticalPath}
               zoomLevel={zoomLevel}
             />
-            <div style={{ height: 25 * 36 }}></div>
           </div>
         </div>
       </div>

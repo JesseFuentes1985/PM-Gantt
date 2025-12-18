@@ -13,6 +13,7 @@ interface TaskRowProps {
   onUpdate: (updates: Partial<Task>) => void;
   onAIDecompose: () => void;
   onAddSubtask: () => void;
+  onRemoveTask: () => void;
 }
 
 const STATUS_CONFIG = {
@@ -32,7 +33,8 @@ const TaskRow: React.FC<TaskRowProps> = ({
   onToggle, 
   onUpdate, 
   onAIDecompose,
-  onAddSubtask
+  onAddSubtask,
+  onRemoveTask
 }) => {
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -62,6 +64,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const depth = getDepth(task);
   const hasChildren = allTasks.some(t => t.parentId === task.id);
   const isParentRow = hasChildren;
+  const isEven = index % 2 === 0;
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
     if (!val || isParentRow) return;
@@ -115,8 +118,8 @@ const TaskRow: React.FC<TaskRowProps> = ({
     <div 
       onClick={onSelect}
       className={`group flex border-b items-center text-xs transition-colors cursor-default h-[36px] dark:border-slate-800/80
-        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40' : 'hover:bg-blue-50/50 dark:hover:bg-slate-800/40'} 
-        ${isParentRow ? 'bg-gray-100 dark:bg-slate-800/60 font-semibold' : 'bg-white dark:bg-slate-900'}`}
+        ${isSelected ? 'bg-blue-100/60 dark:bg-blue-900/40' : (isEven ? 'bg-gray-50/80 dark:bg-slate-900/50' : 'bg-white dark:bg-slate-950')}
+        ${isParentRow ? 'font-semibold' : ''}`}
     >
       <div className="w-10 p-2 text-center text-gray-400 dark:text-slate-500 font-mono text-[10px] shrink-0">
         {index}
@@ -204,6 +207,13 @@ const TaskRow: React.FC<TaskRowProps> = ({
             title={!task.parentId ? "Add Epic" : "Add Subtask"}
           >
             <i className="fas fa-plus-circle text-[10px]"></i>
+          </button>
+          <button 
+            onClick={(e) => { e.stopPropagation(); onRemoveTask(); }}
+            className="text-red-500 dark:text-red-400 hover:text-red-700 p-1 rounded hover:bg-red-100/50 dark:hover:bg-red-900/20"
+            title="Delete Task"
+          >
+            <i className="fas fa-minus-circle text-[10px]"></i>
           </button>
           <button 
             onClick={(e) => { e.stopPropagation(); onAIDecompose(); }}
