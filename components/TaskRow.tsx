@@ -112,21 +112,21 @@ const TaskRow: React.FC<TaskRowProps> = ({
   };
 
   const getRAGInsights = () => {
-    const issues: { icon: string; text: string; type: 'neutral' | 'warn' | 'error' | 'success' }[] = [];
+    const insights: { icon: string; text: string; type: 'neutral' | 'warn' | 'error' | 'success' }[] = [];
     
     if (isParentRow) {
       const children = allTasks.filter(c => c.parentId === task.id);
       const atRisk = children.filter(c => c.rag === RAGStatus.RED).length;
       const delayed = children.filter(c => c.rag === RAGStatus.AMBER).length;
       
-      issues.push({ icon: 'fa-sitemap', text: `Roll-up of ${children.length} sub-items`, type: 'neutral' });
-      if (atRisk > 0) issues.push({ icon: 'fa-exclamation-triangle', text: `${atRisk} critical child risks detected`, type: 'error' });
-      if (delayed > 0) issues.push({ icon: 'fa-clock', text: `${delayed} sub-items currently delayed`, type: 'warn' });
+      insights.push({ icon: 'fa-sitemap', text: `Roll-up of ${children.length} sub-items`, type: 'neutral' });
+      if (atRisk > 0) insights.push({ icon: 'fa-exclamation-triangle', text: `${atRisk} critical child risks detected`, type: 'error' });
+      if (delayed > 0) insights.push({ icon: 'fa-clock', text: `${delayed} sub-items currently delayed`, type: 'warn' });
     } else {
       if (task.status === TaskStatus.BLOCKED) {
-        issues.push({ icon: 'fa-ban', text: "Manually set to BLOCKED", type: 'error' });
+        insights.push({ icon: 'fa-ban', text: "Manually set to BLOCKED", type: 'error' });
       } else if (task.status === TaskStatus.ON_HOLD) {
-        issues.push({ icon: 'fa-pause', text: "Work is currently ON HOLD", type: 'warn' });
+        insights.push({ icon: 'fa-pause', text: "Work is currently ON HOLD", type: 'warn' });
       }
 
       const incompletePredecessors = task.dependencies
@@ -134,22 +134,23 @@ const TaskRow: React.FC<TaskRowProps> = ({
         .filter(p => p && p.status !== TaskStatus.COMPLETED);
 
       if (incompletePredecessors.length > 0) {
-        issues.push({ icon: 'fa-link-slash', text: `${incompletePredecessors.length} incomplete predecessor dependencies`, type: 'error' });
+        insights.push({ icon: 'fa-link-slash', text: `${incompletePredecessors.length} incomplete predecessor dependencies`, type: 'error' });
       }
     }
 
-    if (issues.length === 0) {
-      if (task.rag === RAGStatus.GREEN) issues.push({ icon: 'fa-check-double', text: "Healthy: No blocking issues found", type: 'success' });
-      if (task.rag === RAGStatus.GRAY) issues.push({ icon: 'fa-hourglass-start', text: "Planned: Pending project initiation", type: 'neutral' });
+    if (insights.length === 0) {
+      if (task.rag === RAGStatus.GREEN) insights.push({ icon: 'fa-check-double', text: "Healthy: No blocking issues found", type: 'success' });
+      if (task.rag === RAGStatus.GRAY) insights.push({ icon: 'fa-hourglass-start', text: "Planned: Pending project initiation", type: 'neutral' });
     }
 
-    return issues;
+    return insights;
   };
 
   const handleStatusChange = (newStatus: TaskStatus) => {
     const updates: Partial<Task> = { status: newStatus };
     if (newStatus === TaskStatus.COMPLETED) {
       updates.progress = 100;
+      updates.rag = RAGStatus.GREEN;
     } else if (newStatus === TaskStatus.NOT_STARTED) {
       updates.progress = 0;
     }
@@ -271,6 +272,11 @@ const TaskRow: React.FC<TaskRowProps> = ({
     );
   }
 
+  // Done percentage text color logic
+  const doneTextColor = task.progress === 100 || task.status === TaskStatus.COMPLETED
+    ? 'text-emerald-600 dark:text-emerald-500'
+    : (isParentRow ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-500');
+
   return (
     <div 
       className={`flex items-center h-[36px] border-b dark:border-slate-800 text-[11px] group transition-all duration-75 ${finalRowBg} ${isDragging ? 'opacity-50' : ''} ${isDragTarget ? 'border-t-2 border-t-blue-500' : ''}`}
@@ -389,8 +395,8 @@ const TaskRow: React.FC<TaskRowProps> = ({
       {columnVisibility.done && (
         <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
           <div className="flex items-center justify-center w-full">
-            <input type="number" value={task.progress} onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} disabled={isParentRow} className={`bg-transparent outline-none w-8 text-center font-black ${isParentRow ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-500'}`} />
-            <span className="text-[9px] font-bold text-gray-400 -ml-1">%</span>
+            <input type="number" value={task.progress} onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} disabled={isParentRow} className={`bg-transparent outline-none w-8 text-center font-black ${doneTextColor}`} />
+            <span className={`text-[9px] font-bold -ml-1 ${doneTextColor.replace('text-', 'text-opacity-60 text-')}`}>%</span>
           </div>
         </div>
       )}

@@ -240,10 +240,21 @@ const Timeline: React.FC<TimelineProps> = ({
             const hasChildren = tasks.some(t => t.parentId === task.id);
             const isCurrentlyCritical = showCriticalPath && task.isCritical;
             const isEven = idx % 2 === 0;
+            const isComplete = task.progress === 100 || task.status === TaskStatus.COMPLETED;
 
             const baseClasses = "absolute top-1/2 -translate-y-1/2 h-[22px] group transition-all duration-300 shadow-sm flex items-center px-0.5 overflow-hidden";
             const interactionClasses = hasChildren ? "rounded-sm cursor-default" : "rounded-md cursor-grab active:cursor-grabbing";
-            let colorClasses = !task.isMilestone ? (hasChildren ? (isCurrentlyCritical ? "bg-red-800 dark:bg-red-600" : "bg-slate-800 dark:bg-slate-100") : (isCurrentlyCritical ? "bg-red-500 border-2 border-red-700 scale-y-110 shadow-lg" : getStatusColor(task.status))) : "rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
+            
+            let colorClasses = "";
+            if (task.isMilestone) {
+              colorClasses = "rotate-45 !w-[10px] !h-[10px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
+            } else if (isComplete) {
+              colorClasses = "bg-emerald-500 border-emerald-600";
+            } else if (hasChildren) {
+              colorClasses = isCurrentlyCritical ? "bg-red-800 dark:bg-red-600" : "bg-slate-800 dark:bg-slate-100";
+            } else {
+              colorClasses = isCurrentlyCritical ? "bg-red-500 border-2 border-red-700 scale-y-110 shadow-lg" : getStatusColor(task.status);
+            }
 
             const rowBg = isEven ? 'bg-white dark:bg-slate-950' : 'bg-gray-50/50 dark:bg-slate-900/40';
 
@@ -258,8 +269,8 @@ const Timeline: React.FC<TimelineProps> = ({
                   )}
                   {hasChildren && (
                     <>
-                      <div className={`absolute left-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-l border-b ${isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400'}`} />
-                      <div className={`absolute right-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-r border-b ${isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400'}`} />
+                      <div className={`absolute left-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-l border-b ${isComplete ? 'bg-emerald-500 border-emerald-300' : (isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400')}`} />
+                      <div className={`absolute right-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-r border-b ${isComplete ? 'bg-emerald-500 border-emerald-300' : (isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400')}`} />
                     </>
                   )}
                 </div>
