@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
-import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds } from './utils/ganttLogic';
+import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds, VisibleTaskWithHierarchy } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
 import { saveToDatabase, loadFromDatabase, exportProjectJSON, exportToCSV, importProjectJSON, ProjectData } from './services/persistenceService';
 import DashboardHeader from './components/DashboardHeader';
@@ -71,6 +71,7 @@ const INITIAL_TASKS: Task[] = [
 const App: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
   const [projectTitle, setProjectTitle] = useState('Untitled Project');
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showAI, setShowAI] = useState(false);
   const [activeNotesTaskId, setActiveNotesTaskId] = useState<string | null>(null);
@@ -131,7 +132,29 @@ const App: React.FC = () => {
     }
   }, [notification]);
 
-  const visibleTasksData = useMemo(() => getVisibleTasks(tasks), [tasks]);
+  const visibleTasksData = useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) return getVisibleTasks(tasks);
+
+    // If searching, we flatten the hierarchy and filter across the whole set
+    const allItems: VisibleTaskWithHierarchy[] = [];
+    const traverse = (parentId: string | null, prefix: string) => {
+      const children = tasks.filter(t => t.parentId === parentId);
+      children.forEach((child, index) => {
+        const hierarchyId = prefix ? `${prefix}.${index + 1}` : `${index + 1}`;
+        allItems.push({ task: child, hierarchyId });
+        traverse(child.id, hierarchyId);
+      });
+    };
+    traverse(null, "");
+
+    return allItems.filter(v => 
+      v.task.name.toLowerCase().includes(term) || 
+      (v.task.jiraId && v.task.jiraId.toLowerCase().includes(term)) ||
+      (v.task.owner && v.task.owner.toLowerCase().includes(term))
+    );
+  }, [tasks, searchTerm]);
+
   const visibleTasks = useMemo(() => visibleTasksData.map(v => v.task), [visibleTasksData]);
 
   const hierarchyToIdMap = useMemo(() => {
@@ -423,6 +446,8 @@ const App: React.FC = () => {
         tasks={tasks}
         projectTitle={projectTitle}
         onTitleChange={setProjectTitle}
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
         onAIAnalysis={handleAIAnalysis} 
         onJiraSync={() => alert('Jira Sync complete!')}
         onSave={handleSaveToDB}
@@ -517,9 +542,14 @@ const App: React.FC = () => {
                     isDarkMode={isDarkMode}
                   />
                 ))}
-                {!isSummaryMode && (
+                {!isSummaryMode && !searchTerm && (
                    <div className={`p-3 flex items-center gap-2 text-gray-300 dark:text-slate-600 hover:text-blue-600 hover:bg-blue-50/20 dark:hover:bg-blue-900/10 cursor-pointer text-xs font-bold h-[36px] border-b border-dashed dark:border-slate-800 ${visibleTasksData.length % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/50 dark:bg-slate-900/40'}`} onClick={() => handleAddTask(null, false, true)}>
                     <i className="fas fa-plus-circle ml-8"></i> Add Feature (PF)
+                  </div>
+                )}
+                {searchTerm && visibleTasksData.length === 0 && (
+                  <div className="p-10 text-center text-gray-400 dark:text-slate-500 italic text-sm">
+                    No tasks match your search...
                   </div>
                 )}
               </div>

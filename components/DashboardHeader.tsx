@@ -8,6 +8,8 @@ interface HeaderProps {
   tasks: Task[];
   projectTitle: string;
   onTitleChange: (title: string) => void;
+  searchTerm: string;
+  onSearchChange: (term: string) => void;
   onAIAnalysis: () => void;
   onJiraSync: () => void;
   onSave: () => void;
@@ -32,6 +34,8 @@ const DashboardHeader: React.FC<HeaderProps> = ({
   tasks,
   projectTitle,
   onTitleChange,
+  searchTerm,
+  onSearchChange,
   onAIAnalysis, 
   onJiraSync,
   onSave,
@@ -141,7 +145,6 @@ const DashboardHeader: React.FC<HeaderProps> = ({
           <span className="text-xs font-black text-blue-600 dark:text-blue-400">{stats.averageProgress}%</span>
         </div>
         <div className="flex flex-col items-end">
-          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none">Completed</span>
           <span className="text-xs font-black text-green-600 dark:text-green-500">{stats.completedTasks}/{stats.totalTasks}</span>
         </div>
         <div className="flex flex-col items-end">
@@ -152,6 +155,26 @@ const DashboardHeader: React.FC<HeaderProps> = ({
 
       <div className="flex items-center gap-2 shrink-0">
         <div className="flex items-center gap-1 mr-2">
+          {/* Functional Search Bar */}
+          <div className="relative flex items-center mr-1">
+            <i className="fas fa-search absolute left-3 text-gray-400 text-[10px]"></i>
+            <input 
+              type="text" 
+              placeholder="Search tasks..." 
+              value={searchTerm}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className="pl-8 pr-8 py-1.5 rounded-md border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800 text-[11px] font-medium w-32 md:w-40 lg:w-48 focus:w-56 transition-all outline-none focus:ring-1 focus:ring-blue-500 text-gray-700 dark:text-slate-200 shadow-inner"
+            />
+            {searchTerm && (
+              <button 
+                onClick={() => onSearchChange('')}
+                className="absolute right-2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 p-0.5"
+              >
+                <i className="fas fa-times-circle text-[11px]"></i>
+              </button>
+            )}
+          </div>
+
           <button 
             onClick={onJiraSync}
             disabled={isLoading}
