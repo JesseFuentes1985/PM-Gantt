@@ -96,7 +96,6 @@ const App: React.FC = () => {
   const rightPaneRef = useRef<HTMLDivElement>(null);
 
   const isSummaryMode = leftPanelWidth < 380;
-  const isVerticalHeader = leftPanelWidth < 650;
   
   const columnVisibility = useMemo(() => ({
     rag: leftPanelWidth > 1150,
@@ -435,7 +434,8 @@ const App: React.FC = () => {
     document.body.style.userSelect = 'none';
   }, [handleResize, stopResizing]);
 
-  const headerLabelClass = isVerticalHeader ? "writing-vertical-rl rotate-180 h-10 w-full flex items-center justify-center pt-2" : "w-full text-center p-2";
+  // Updated header label class to be horizontal and truncate instead of rotating upside down
+  const headerLabelClass = "w-full text-center p-2 truncate h-full flex items-center justify-center";
 
   const activeNotesTask = useMemo(() => tasks.find(t => t.id === activeNotesTaskId), [tasks, activeNotesTaskId]);
 
