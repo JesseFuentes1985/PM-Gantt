@@ -139,16 +139,17 @@ const DashboardHeader: React.FC<HeaderProps> = ({
       )}
 
       {/* Statistics */}
-      <div className="hidden xl:flex items-center gap-6 mx-4">
-        <div className="flex flex-col items-end">
-          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none">Progress</span>
+      <div className="hidden xl:flex items-center gap-12 mx-8">
+        <div className="flex flex-col items-center">
+          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none mb-1">Progress</span>
           <span className="text-xs font-black text-blue-600 dark:text-blue-400">{stats.averageProgress}%</span>
         </div>
-        <div className="flex flex-col items-end">
-          <span className="text-xs font-black text-green-600 dark:text-green-500">{stats.completedTasks}/{stats.totalTasks}</span>
+        <div className="flex flex-col items-center">
+          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none mb-1">Completed</span>
+          <span className="text-xs font-black text-emerald-600 dark:text-emerald-500">{stats.completedTasks}/{stats.totalTasks}</span>
         </div>
-        <div className="flex flex-col items-end">
-          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none">Slack</span>
+        <div className="flex flex-col items-center">
+          <span className="text-[9px] text-gray-400 dark:text-slate-500 font-bold uppercase tracking-tighter leading-none mb-1">Slack</span>
           <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">{stats.totalProjectFloat || 0}d</span>
         </div>
       </div>
