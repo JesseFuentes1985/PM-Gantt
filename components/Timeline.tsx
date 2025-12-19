@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Task, DependencyType, TaskStatus, ZoomLevel } from '../types';
 import { addDays, calculateDuration, getEndDateFromDuration, getProjectBounds } from '../utils/ganttLogic';
 
@@ -96,12 +96,9 @@ const Timeline: React.FC<TimelineProps> = ({
     e.stopPropagation();
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
-    
-    // Lock milestones from being stretched (resized)
     if (type === 'resize' && task.isMilestone) return;
-
     const hasChildren = tasks.some(t => t.parentId === taskId);
-    if (hasChildren) return;
+    if (hasChildren && !task.isMilestone) return; // Summary tasks can't be resized/moved normally unless milestone point
     setDragState({
       id: taskId,
       type,
@@ -118,6 +115,7 @@ const Timeline: React.FC<TimelineProps> = ({
       const deltaDays = Math.round(deltaX / PIXELS_PER_DAY);
       const task = tasks.find(t => t.id === dragState.id);
       if (!task) return;
+      
       if (dragState.type === 'move') {
         const newStart = addDays(dragState.initialStart, deltaDays);
         if (newStart !== task.startDate) {
@@ -174,7 +172,6 @@ const Timeline: React.FC<TimelineProps> = ({
             );
           })}
         </div>
-        {/* Today Header Marker */}
         <div 
           className="absolute top-0 bottom-0 pointer-events-none z-30 flex flex-col items-center" 
           style={{ left: todayX, transform: 'translateX(-50%)' }}
@@ -195,7 +192,6 @@ const Timeline: React.FC<TimelineProps> = ({
           })}
         </div>
 
-        {/* Today Vertical Line */}
         <div 
           className="absolute top-0 bottom-0 border-l-2 border-indigo-500/60 border-dashed pointer-events-none z-20"
           style={{ left: todayX }}
@@ -213,17 +209,17 @@ const Timeline: React.FC<TimelineProps> = ({
               let x2 = 0, y2 = idx * ROW_HEIGHT + ROW_HEIGHT / 2;
 
               if (dep.type === DependencyType.FS) {
-                x1 = getOffset(pred.endDate) + PIXELS_PER_DAY;
+                x1 = getOffset(pred.endDate) + (pred.isMilestone ? PIXELS_PER_DAY / 2 : PIXELS_PER_DAY);
                 x2 = getOffset(task.startDate);
               } else if (dep.type === DependencyType.SS) {
                 x1 = getOffset(pred.startDate);
                 x2 = getOffset(task.startDate);
               } else if (dep.type === DependencyType.FF) {
-                x1 = getOffset(pred.endDate) + PIXELS_PER_DAY;
-                x2 = getOffset(task.endDate) + PIXELS_PER_DAY;
+                x1 = getOffset(pred.endDate) + (pred.isMilestone ? PIXELS_PER_DAY / 2 : PIXELS_PER_DAY);
+                x2 = getOffset(task.endDate) + (task.isMilestone ? PIXELS_PER_DAY / 2 : PIXELS_PER_DAY);
               } else if (dep.type === DependencyType.SF) {
                 x1 = getOffset(pred.startDate);
-                x2 = getOffset(task.endDate) + PIXELS_PER_DAY;
+                x2 = getOffset(task.endDate) + (task.isMilestone ? PIXELS_PER_DAY / 2 : PIXELS_PER_DAY);
               }
 
               const isLineCritical = showCriticalPath && task.isCritical && pred.isCritical;
@@ -246,18 +242,22 @@ const Timeline: React.FC<TimelineProps> = ({
         <div className="relative z-10">
           {tasks.map((task, idx) => {
             const startX = getOffset(task.startDate);
+            const endX = getOffset(task.endDate);
             const barWidth = Math.max(2, task.duration * PIXELS_PER_DAY);
             const hasChildren = tasks.some(t => t.parentId === task.id);
             const isCurrentlyCritical = showCriticalPath && task.isCritical;
             const isEven = idx % 2 === 0;
             const isComplete = task.progress === 100 || task.status === TaskStatus.COMPLETED;
 
+            // Milestones are point-in-time, anchored to the center of the end date column
+            const milestonePointX = endX + (PIXELS_PER_DAY / 2);
+
             const baseClasses = "absolute top-1/2 -translate-y-1/2 h-[22px] group transition-all duration-300 shadow-sm flex items-center px-0.5 overflow-hidden";
-            const interactionClasses = hasChildren ? "rounded-sm cursor-default" : (task.isMilestone ? "rounded-sm cursor-grab active:cursor-grabbing" : "rounded-md cursor-grab active:cursor-grabbing");
+            const interactionClasses = (hasChildren && !task.isMilestone) ? "rounded-sm cursor-default" : (task.isMilestone ? "rounded-none cursor-grab active:cursor-grabbing" : "rounded-md cursor-grab active:cursor-grabbing");
             
             let colorClasses = "";
             if (task.isMilestone) {
-              colorClasses = "rotate-45 !w-[12px] !h-[12px] !rounded-none !bg-yellow-500 border border-white dark:border-slate-900 shadow-md";
+              colorClasses = "rotate-45 !w-[14px] !h-[14px] !bg-yellow-500 border-2 border-white dark:border-slate-900 shadow-md";
             } else if (isComplete) {
               colorClasses = "bg-emerald-500 border-emerald-600";
             } else if (hasChildren) {
@@ -268,29 +268,67 @@ const Timeline: React.FC<TimelineProps> = ({
 
             const rowBg = isEven ? 'bg-white dark:bg-slate-950' : 'bg-gray-50/50 dark:bg-slate-900/40';
 
+            const showNameInside = !task.isMilestone && barWidth > 60;
+            const textClass = hasChildren ? (isCurrentlyCritical || !isDarkMode ? 'text-white' : 'text-slate-900') : 'text-white';
+
             return (
               <div key={task.id} className={`relative w-full border-b border-gray-100 dark:border-slate-800/80 transition-colors ${rowBg}`} style={{ height: ROW_HEIGHT }}>
                 <div 
                   onMouseDown={(e) => handleMouseDown(e, task.id, 'move')} 
-                  className={`${baseClasses} ${interactionClasses} ${colorClasses}`} 
+                  className={`${baseClasses} ${interactionClasses} ${colorClasses} z-10`} 
+                  title={task.name}
                   style={{ 
-                    left: task.isMilestone ? startX - 6 : startX, 
-                    width: task.isMilestone ? 12 : barWidth 
+                    left: task.isMilestone ? milestonePointX - 7 : startX, 
+                    width: task.isMilestone ? 14 : barWidth 
                   }}
                 >
-                  {!hasChildren && !task.isMilestone && (
+                  {!task.isMilestone && !hasChildren && (
                     <>
                       <div className="h-full absolute left-0 top-0 bg-black/10 pointer-events-none" style={{ width: `${task.progress}%` }} />
+                      {showNameInside && (
+                        <span className={`relative z-10 px-1.5 text-[10px] font-bold truncate leading-none w-full ${textClass}`}>
+                          {task.name}
+                        </span>
+                      )}
                       <div onMouseDown={(e) => handleMouseDown(e, task.id, 'resize')} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-white/40 rounded-r-md z-10" />
                     </>
                   )}
-                  {hasChildren && (
+                  {hasChildren && !task.isMilestone && (
                     <>
+                      {showNameInside && (
+                        <span className={`relative z-10 px-1.5 text-[10px] font-black truncate leading-none w-full ${textClass}`}>
+                          {task.name}
+                        </span>
+                      )}
                       <div className={`absolute left-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-l border-b ${isComplete ? 'bg-emerald-500 border-emerald-300' : (isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400')}`} />
                       <div className={`absolute right-0 bottom-0 w-[4px] h-[6px] -translate-y-[2px] border-r border-b ${isComplete ? 'bg-emerald-500 border-emerald-300' : (isDarkMode ? 'bg-slate-100 border-slate-400' : 'bg-slate-800 border-gray-400')}`} />
                     </>
                   )}
                 </div>
+
+                {/* Milestone label to the right of the point anchor */}
+                {task.isMilestone && (
+                   <div 
+                    className="absolute top-1/2 -translate-y-1/2 pl-5 flex items-center pointer-events-none h-full whitespace-nowrap z-0"
+                    style={{ left: milestonePointX }}
+                   >
+                     <span className="text-[10px] font-black text-yellow-600 dark:text-yellow-500 uppercase tracking-tighter bg-white/60 dark:bg-slate-900/60 px-1 rounded backdrop-blur-[2px]">
+                       {task.name}
+                     </span>
+                   </div>
+                )}
+
+                {/* Short task fallback label - only for non-milestones */}
+                {!task.isMilestone && !showNameInside && (
+                   <div 
+                    className="absolute top-1/2 -translate-y-1/2 pl-2 flex items-center pointer-events-none h-full whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-0"
+                    style={{ left: startX + barWidth }}
+                   >
+                     <span className="text-[9px] font-bold text-gray-500 dark:text-slate-400 italic">
+                       {task.name}
+                     </span>
+                   </div>
+                )}
               </div>
             );
           })}

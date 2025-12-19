@@ -83,6 +83,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const hasChildren = allTasks.some(t => t.parentId === task.id);
   const isParentRow = hasChildren;
   const isEven = index % 2 === 0;
+  const isComplete = task.status === TaskStatus.COMPLETED;
 
   const handleDateChange = (field: 'startDate' | 'endDate', val: string) => {
     if (!val || isParentRow) return;
@@ -280,7 +281,11 @@ const TaskRow: React.FC<TaskRowProps> = ({
     : (isParentRow ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-500');
 
   const floatDays = task.totalFloat || 0;
-  const floatTextColor = floatDays === 0 ? 'text-rose-600 dark:text-rose-500 font-black' : 'text-gray-400 dark:text-slate-500';
+  const floatTextColor = (floatDays === 0 && !isComplete) ? 'text-rose-600 dark:text-rose-500 font-black' : 'text-gray-400 dark:text-slate-500';
+
+  // Per user request: Each task, epic, story, or feature can independently be marked as a milestone.
+  // There is no longer any type or parent restriction.
+  const isEligibleForMilestone = true;
 
   return (
     <div 
@@ -388,23 +393,23 @@ const TaskRow: React.FC<TaskRowProps> = ({
 
       {columnVisibility.atRisk && (
         <>
-          <div className="w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-rose-500/50 dark:border-rose-600/50 bg-rose-50/5 dark:bg-rose-950/5" title="At Risk">
+          <div className={`w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-rose-500/50 dark:border-rose-600/50 bg-rose-50/5 dark:bg-rose-950/5 ${isComplete ? 'opacity-30 grayscale cursor-not-allowed' : ''}`} title="At Risk">
             <input 
               type="checkbox" 
               checked={task.isAtRisk || false} 
-              onChange={(e) => onUpdate({ isAtRisk: e.target.checked })}
-              className="w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+              onChange={(e) => !isComplete && onUpdate({ isAtRisk: e.target.checked })}
+              disabled={isComplete}
+              className={`w-3.5 h-3.5 rounded border-gray-300 text-rose-600 focus:ring-rose-500 ${isComplete ? 'cursor-not-allowed' : 'cursor-pointer'}`}
             />
           </div>
-          <div className="w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-amber-500/50 dark:border-amber-600/50 bg-amber-50/5 dark:bg-amber-950/5" title="Is Milestone">
-            {!isParentRow && (
-              <input 
-                type="checkbox" 
-                checked={task.isMilestone || false} 
-                onChange={(e) => onUpdate({ isMilestone: e.target.checked })}
-                className="w-3.5 h-3.5 rounded border-gray-300 text-yellow-600 focus:ring-yellow-500 cursor-pointer"
-              />
-            )}
+          <div className={`w-12 shrink-0 h-full flex flex-col items-center justify-center border-l-2 border-amber-500/50 dark:border-amber-600/50 bg-amber-50/5 dark:bg-amber-950/5 ${isComplete ? 'opacity-30 grayscale cursor-not-allowed' : ''}`} title="Is Milestone">
+            <input 
+              type="checkbox" 
+              checked={task.isMilestone || false} 
+              onChange={(e) => !isComplete && onUpdate({ isMilestone: e.target.checked })}
+              disabled={isComplete}
+              className={`w-3.5 h-3.5 rounded border-gray-300 text-yellow-600 focus:ring-yellow-500 ${isComplete ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+            />
           </div>
         </>
       )}
@@ -412,8 +417,14 @@ const TaskRow: React.FC<TaskRowProps> = ({
       {columnVisibility.float && (
         <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
           <div className={`flex flex-col items-center justify-center ${floatTextColor}`}>
-             <span className="text-[10px]">{floatDays}d</span>
-             {floatDays > 0 && <div className="w-1.5 h-1.5 rounded-full bg-blue-400/30 mt-0.5"></div>}
+             {isComplete ? (
+               <i className="fas fa-check text-emerald-500/50 text-[10px]"></i>
+             ) : (
+               <>
+                 <span className="text-[10px]">{floatDays}d</span>
+                 {floatDays > 0 && <div className="w-1.5 h-1.5 rounded-full bg-blue-400/30 mt-0.5"></div>}
+               </>
+             )}
           </div>
         </div>
       )}
@@ -421,7 +432,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
       {columnVisibility.done && (
         <div className="w-16 shrink-0 border-l dark:border-slate-800 h-full flex items-center justify-center">
           <div className="flex items-center justify-center w-full">
-            <input type="number" value={task.progress} onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} disabled={isParentRow} className={`bg-transparent outline-none w-8 text-center font-black ${doneTextColor}`} />
+            <input type="number" value={task.progress} onChange={(e) => onUpdate({ progress: Math.min(100, Math.max(0, parseInt(e.target.value) || 0)) })} disabled={isParentRow || isComplete} className={`bg-transparent outline-none w-8 text-center font-black ${doneTextColor}`} />
             <span className={`text-[9px] font-bold -ml-1 ${doneTextColor.replace('text-', 'text-opacity-60 text-')}`}>%</span>
           </div>
         </div>
