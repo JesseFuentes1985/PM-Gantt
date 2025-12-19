@@ -17,6 +17,7 @@ interface TaskRowProps {
   onUpdate: (updates: Partial<Task>) => void;
   onAIDecompose: () => void;
   onRemoveTask: () => void;
+  onOpenNotes: () => void;
   onDragStart: (e: React.DragEvent, id: string) => void;
   onDragOver: (e: React.DragEvent, id: string) => void;
   onDrop: (e: React.DragEvent, id: string) => void;
@@ -51,6 +52,7 @@ const TaskRow: React.FC<TaskRowProps> = ({
   onUpdate, 
   onAIDecompose,
   onRemoveTask,
+  onOpenNotes,
   onDragStart,
   onDragOver,
   onDrop,
@@ -283,9 +285,12 @@ const TaskRow: React.FC<TaskRowProps> = ({
   const floatDays = task.totalFloat || 0;
   const floatTextColor = (floatDays === 0 && !isComplete) ? 'text-rose-600 dark:text-rose-500 font-black' : 'text-gray-400 dark:text-slate-500';
 
-  // Per user request: Each task, epic, story, or feature can independently be marked as a milestone.
-  // There is no longer any type or parent restriction.
-  const isEligibleForMilestone = true;
+  // Notes state logic
+  const hasNotes = task.notes && task.notes.trim().length > 0;
+  // Specific notes button styling logic based on 3 states: Default, Hover(empty), Persistent(saved)
+  const noteBtnClasses = hasNotes
+    ? 'text-amber-500 hover:text-amber-500' // Yellow stays yellow persistently
+    : 'text-gray-300 hover:text-gray-400 dark:text-slate-600 dark:hover:text-slate-500'; // Gray states
 
   return (
     <div 
@@ -320,6 +325,13 @@ const TaskRow: React.FC<TaskRowProps> = ({
           className={`bg-transparent outline-none flex-1 truncate transition-colors focus:bg-white dark:focus:bg-slate-800 px-1 rounded ${isParentRow ? 'font-bold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400'}`}
         />
         <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+          <button 
+            onClick={(e) => { e.stopPropagation(); onOpenNotes(); }} 
+            className={`p-1 transition-colors duration-200 ${noteBtnClasses}`} 
+            title="Row Notes"
+          >
+            <i className="fas fa-sticky-note"></i>
+          </button>
           {task.jiraType !== 'STORY' && (
             <button onClick={(e) => { e.stopPropagation(); onAddSubtask(); }} className="p-1 text-gray-400 hover:text-green-500" title={`Add subtask`}><i className="fas fa-plus-circle"></i></button>
           )}

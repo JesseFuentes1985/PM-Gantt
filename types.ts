@@ -55,6 +55,7 @@ export interface Task {
   totalFloat?: number; // Calculated slack time in days
   jiraId?: string;
   jiraType?: 'PF' | 'EPIC' | 'STORY' | 'TASK';
+  notes?: string;
 }
 
 export interface ProjectStats {

@@ -8,6 +8,7 @@ import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
 import Timeline from './components/Timeline';
 import AIAssistant from './components/AIAssistant';
+import NotesDrawer from './components/NotesDrawer';
 
 const INITIAL_TASKS: Task[] = [
   {
@@ -72,6 +73,7 @@ const App: React.FC = () => {
   const [projectTitle, setProjectTitle] = useState('Untitled Project');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showAI, setShowAI] = useState(false);
+  const [activeNotesTaskId, setActiveNotesTaskId] = useState<string | null>(null);
   const [showCriticalPath, setShowCriticalPath] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>(ZoomLevel.DAYS);
   const [aiInsights, setAiInsights] = useState<any>(null);
@@ -259,6 +261,7 @@ const App: React.FC = () => {
       return identifyCriticalPath(rollupHierarchy(newTasks));
     });
     if (selectedTaskId === id) setSelectedTaskId(null);
+    if (activeNotesTaskId === id) setActiveNotesTaskId(null);
   };
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -372,6 +375,7 @@ const App: React.FC = () => {
       const insights = await getAIProjectInsights(tasks);
       setAiInsights(insights);
       setShowAI(true);
+      setActiveNotesTaskId(null);
     } catch (error) {
       console.error("AI Analysis failed:", error);
     } finally {
@@ -409,6 +413,8 @@ const App: React.FC = () => {
   }, [handleResize, stopResizing]);
 
   const headerLabelClass = isVerticalHeader ? "writing-vertical-rl rotate-180 h-10 w-full flex items-center justify-center pt-2" : "w-full text-center p-2";
+
+  const activeNotesTask = useMemo(() => tasks.find(t => t.id === activeNotesTaskId), [tasks, activeNotesTaskId]);
 
   return (
     <div className={`flex flex-col h-screen overflow-hidden ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-white text-gray-900'}`}>
@@ -497,6 +503,10 @@ const App: React.FC = () => {
                     onAIDecompose={() => handleAIDecompose(task)}
                     onAddSubtask={() => handleAddTask(task.id, true)}
                     onRemoveTask={() => handleRemoveTask(task.id)}
+                    onOpenNotes={() => {
+                      setActiveNotesTaskId(task.id);
+                      setShowAI(false);
+                    }}
                     onDragStart={handleDragStart}
                     onDragOver={handleDragOver}
                     onDrop={handleDrop}
@@ -531,6 +541,14 @@ const App: React.FC = () => {
         </div>
       </div>
       {showAI && aiInsights && <AIAssistant insights={aiInsights} onClose={() => setShowAI(false)} isDarkMode={isDarkMode} />}
+      {activeNotesTaskId && activeNotesTask && (
+        <NotesDrawer 
+          task={activeNotesTask} 
+          onUpdate={handleUpdateTask} 
+          onClose={() => setActiveNotesTaskId(null)} 
+          isDarkMode={isDarkMode} 
+        />
+      )}
       {loading && (
         <div className="fixed inset-0 bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[100]">
           <div className="h-10 w-10 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
