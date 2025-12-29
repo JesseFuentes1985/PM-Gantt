@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
 import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds, VisibleTaskWithHierarchy } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
-import { saveToDatabase, loadFromDatabase, exportProjectJSON, exportToCSV, importProjectJSON, ProjectData } from './services/persistenceService';
+import { saveProjectState, loadProjectState, exportProjectJSON, exportToCSV, importProjectJSON } from './services/persistenceService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
 import Timeline from './components/Timeline';
@@ -69,7 +69,7 @@ const INITIAL_TASKS: Task[] = [
 ];
 
 const App: React.FC = () => {
-  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [projectTitle, setProjectTitle] = useState('Untitled Project');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -85,6 +85,9 @@ const App: React.FC = () => {
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  
+  // Ref to track if we're currently loading to avoid auto-saving during rehydration
+  const isInitialLoad = useRef(true);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const saved = localStorage.getItem('gantt_left_panel_width');
@@ -109,14 +112,46 @@ const App: React.FC = () => {
     dates: leftPanelWidth > 420,
   }), [leftPanelWidth]);
 
-  // Load from database on mount
+  // LOAD DATA ON STARTUP
   useEffect(() => {
-    const data = loadFromDatabase();
-    if (data) {
-      setTasks(identifyCriticalPath(rollupHierarchy(data.tasks)));
-      setProjectTitle(data.title || 'Untitled Project');
-      setLastSaved(data.lastUpdated);
+    const state = loadProjectState();
+    if (state) {
+      setTasks(identifyCriticalPath(rollupHierarchy(state.tasks)));
+      setProjectTitle(state.title || 'Untitled Project');
+      setLastSaved(new Date(state.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } else {
+      setTasks(identifyCriticalPath(rollupHierarchy(INITIAL_TASKS)));
     }
+    isInitialLoad.current = false;
+  }, []);
+
+  // AUTO-SAVE ON CHANGES
+  useEffect(() => {
+    if (isInitialLoad.current) return;
+    
+    // Immediate save trigger
+    saveProjectState(tasks, projectTitle);
+    
+    // Update synced label with visual indicator
+    const timer = setTimeout(() => {
+      setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [tasks, projectTitle]);
+
+  // SYNC ACROSS TABS
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'pm_gantt_state_v1' && e.newValue) {
+        const state = JSON.parse(e.newValue);
+        setTasks(identifyCriticalPath(rollupHierarchy(state.tasks)));
+        setProjectTitle(state.title || 'Untitled Project');
+        setLastSaved(new Date(state.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   useEffect(() => {
@@ -169,6 +204,7 @@ const App: React.FC = () => {
   }, [visibleTasksData]);
 
   const stats: ProjectStats = useMemo(() => {
+    if (tasks.length === 0) return { totalTasks: 0, completedTasks: 0, atRiskTasks: 0, averageProgress: 0, criticalPath: [], totalProjectFloat: 0 };
     const total = tasks.length;
     const completed = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
     const atRisk = tasks.filter(t => t.rag === RAGStatus.RED || t.isAtRisk).length;
@@ -201,12 +237,11 @@ const App: React.FC = () => {
     });
   };
 
-  const handleSaveToDB = async () => {
+  const handleManualSave = async () => {
     setIsSaving(true);
-    const lastUpdate = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const data: ProjectData = { tasks, title: projectTitle, lastUpdated: lastUpdate };
     try {
-      await saveToDatabase(data);
+      saveProjectState(tasks, projectTitle);
+      const lastUpdate = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setLastSaved(lastUpdate);
       setNotification({ msg: "Project saved successfully", type: 'success' });
     } catch (err) {
@@ -217,7 +252,7 @@ const App: React.FC = () => {
   };
 
   const handleExport = () => {
-    exportProjectJSON({ tasks, title: projectTitle, lastUpdated: lastSaved || new Date().toISOString() });
+    exportProjectJSON(tasks, projectTitle);
     setNotification({ msg: "Project exported", type: 'success' });
   };
 
@@ -382,7 +417,8 @@ const App: React.FC = () => {
       }
     }
 
-    const newT = createNewTask(parentId, tasks[0]?.startDate || new Date().toISOString().split('T')[0], typeToCreate);
+    const baseStartDate = tasks.length > 0 ? tasks[0].startDate : new Date().toISOString().split('T')[0];
+    const newT = createNewTask(parentId, baseStartDate, typeToCreate);
     setTasks(prev => {
       const newTasks = [...prev];
       newTasks.splice(insertIndex, 0, newT);
@@ -450,7 +486,7 @@ const App: React.FC = () => {
         onSearchChange={setSearchTerm}
         onAIAnalysis={handleAIAnalysis} 
         onJiraSync={() => alert('Jira Sync complete!')}
-        onSave={handleSaveToDB}
+        onSave={handleManualSave}
         onExport={handleExport}
         onExportExcel={handleExportExcel}
         onImport={handleImport}
@@ -507,7 +543,7 @@ const App: React.FC = () => {
                   {columnVisibility.rag && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>RAG</span></div>}
                 </>
               )}
-              {isSummaryMode && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className="writing-vertical-rl rotate-180 h-10 w-full flex items-center justify-center pt-2">STATUS</span></div>}
+              {isSummaryMode && <div className="w-12 shrink-0 border-l dark:border-slate-800 flex items-end"><span className={headerLabelClass}>STATUS</span></div>}
             </div>
             
             <div ref={leftPaneRef} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white dark:bg-slate-900">
