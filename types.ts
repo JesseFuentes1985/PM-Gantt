@@ -66,3 +66,11 @@ export interface ProjectStats {
   criticalPath: string[];
   totalProjectFloat?: number; // Available project buffer
 }
+
+export interface ProjectMetadata {
+  id: string;
+  title: string;
+  lastUpdated: string;
+  taskCount: number;
+  progress: number;
+}

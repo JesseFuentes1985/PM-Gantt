@@ -1,14 +1,15 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel } from './types';
-import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, parseDependencyString, formatDependencyString, getProjectBounds, VisibleTaskWithHierarchy } from './utils/ganttLogic';
+import { Task, TaskStatus, RAGStatus, ProjectStats, ZoomLevel, ProjectMetadata } from './types';
+import { rollupHierarchy, getVisibleTasks, propagateChanges, identifyCriticalPath, createNewTask, getEndDateFromDuration, addDays, getProjectBounds, VisibleTaskWithHierarchy } from './utils/ganttLogic';
 import { getAIProjectInsights, getAITaskBreakdown } from './services/geminiService';
-import { saveProjectState, loadProjectState, exportProjectJSON, exportToCSV, importProjectJSON } from './services/persistenceService';
+import { saveProjectState, loadProjectState, exportProjectJSON, exportToCSV, importProjectJSON, getProjectsList, deleteProject, migrateLegacyData } from './services/persistenceService';
 import DashboardHeader from './components/DashboardHeader';
 import TaskRow from './components/TaskRow';
 import Timeline from './components/Timeline';
 import AIAssistant from './components/AIAssistant';
 import NotesDrawer from './components/NotesDrawer';
+import ProjectList from './components/ProjectList';
 
 const INITIAL_TASKS: Task[] = [
   {
@@ -69,6 +70,8 @@ const INITIAL_TASKS: Task[] = [
 ];
 
 const App: React.FC = () => {
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [projectTitle, setProjectTitle] = useState('Untitled Project');
   const [searchTerm, setSearchTerm] = useState('');
@@ -86,17 +89,77 @@ const App: React.FC = () => {
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   
-  // Ref to track if we're currently loading to avoid auto-saving during rehydration
   const isInitialLoad = useRef(true);
-
   const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
     const saved = localStorage.getItem('gantt_left_panel_width');
     return saved ? parseInt(saved, 10) : 800;
   });
   const isResizing = useRef(false);
-
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
+
+  // STARTUP: Migrate and Load Project List
+  useEffect(() => {
+    const migratedId = migrateLegacyData();
+    const list = getProjectsList();
+    setProjects(list);
+    
+    // Check if we should automatically open the last project (optional)
+    // For now, let's start at the project list unless migration just happened
+    if (migratedId) {
+      handleOpenProject(migratedId);
+    }
+    
+    isInitialLoad.current = false;
+  }, []);
+
+  // LOAD PROJECT DATA ON PROJECT ID CHANGE
+  useEffect(() => {
+    if (currentProjectId) {
+      const state = loadProjectState(currentProjectId);
+      if (state) {
+        setTasks(identifyCriticalPath(rollupHierarchy(state.tasks)));
+        setProjectTitle(state.title || 'Untitled Project');
+        setLastSaved(new Date(state.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      }
+    } else {
+      setTasks([]);
+      setProjectTitle('');
+      setLastSaved(null);
+    }
+  }, [currentProjectId]);
+
+  // AUTO-SAVE ON CHANGES (Specific to Project)
+  useEffect(() => {
+    if (!currentProjectId || isInitialLoad.current) return;
+    
+    const timer = setTimeout(() => {
+      saveProjectState(currentProjectId, tasks, projectTitle);
+      setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      setProjects(getProjectsList());
+    }, 1000); // Debounce save for better performance during multi-task updates
+
+    return () => clearTimeout(timer);
+  }, [tasks, projectTitle, currentProjectId]);
+
+  const handleOpenProject = (id: string) => {
+    setCurrentProjectId(id);
+    setSelectedTaskId(null);
+    setActiveNotesTaskId(null);
+  };
+
+  const handleCreateProject = () => {
+    const newId = `proj-${Date.now()}`;
+    saveProjectState(newId, identifyCriticalPath(rollupHierarchy(INITIAL_TASKS)), "New Project");
+    setProjects(getProjectsList());
+    handleOpenProject(newId);
+  };
+
+  const handleDeleteProject = (id: string) => {
+    deleteProject(id);
+    setProjects(getProjectsList());
+    if (currentProjectId === id) setCurrentProjectId(null);
+  };
 
   const isSummaryMode = leftPanelWidth < 380;
   
@@ -111,48 +174,6 @@ const App: React.FC = () => {
     duration: leftPanelWidth > 520,
     dates: leftPanelWidth > 420,
   }), [leftPanelWidth]);
-
-  // LOAD DATA ON STARTUP
-  useEffect(() => {
-    const state = loadProjectState();
-    if (state) {
-      setTasks(identifyCriticalPath(rollupHierarchy(state.tasks)));
-      setProjectTitle(state.title || 'Untitled Project');
-      setLastSaved(new Date(state.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    } else {
-      setTasks(identifyCriticalPath(rollupHierarchy(INITIAL_TASKS)));
-    }
-    isInitialLoad.current = false;
-  }, []);
-
-  // AUTO-SAVE ON CHANGES
-  useEffect(() => {
-    if (isInitialLoad.current) return;
-    
-    // Immediate save trigger
-    saveProjectState(tasks, projectTitle);
-    
-    // Update synced label with visual indicator
-    const timer = setTimeout(() => {
-      setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, [tasks, projectTitle]);
-
-  // SYNC ACROSS TABS
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'pm_gantt_state_v1' && e.newValue) {
-        const state = JSON.parse(e.newValue);
-        setTasks(identifyCriticalPath(rollupHierarchy(state.tasks)));
-        setProjectTitle(state.title || 'Untitled Project');
-        setLastSaved(new Date(state.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      }
-    };
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
 
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add('dark');
@@ -170,7 +191,6 @@ const App: React.FC = () => {
     const term = searchTerm.toLowerCase().trim();
     if (!term) return getVisibleTasks(tasks);
 
-    // If searching, we flatten the hierarchy and filter across the whole set
     const allItems: VisibleTaskWithHierarchy[] = [];
     const traverse = (parentId: string | null, prefix: string) => {
       const children = tasks.filter(t => t.parentId === parentId);
@@ -238,9 +258,10 @@ const App: React.FC = () => {
   };
 
   const handleManualSave = async () => {
+    if (!currentProjectId) return;
     setIsSaving(true);
     try {
-      saveProjectState(tasks, projectTitle);
+      saveProjectState(currentProjectId, tasks, projectTitle);
       const lastUpdate = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setLastSaved(lastUpdate);
       setNotification({ msg: "Project saved successfully", type: 'success' });
@@ -264,8 +285,15 @@ const App: React.FC = () => {
   const handleImport = async (file: File) => {
     try {
       const data = await importProjectJSON(file);
-      setTasks(identifyCriticalPath(rollupHierarchy(data.tasks)));
-      setProjectTitle(data.title || 'Imported Project');
+      if (currentProjectId) {
+        setTasks(identifyCriticalPath(rollupHierarchy(data.tasks)));
+        setProjectTitle(data.title || 'Imported Project');
+      } else {
+        const newId = `proj-import-${Date.now()}`;
+        saveProjectState(newId, data.tasks, data.title || "Imported Project");
+        setProjects(getProjectsList());
+        handleOpenProject(newId);
+      }
       setNotification({ msg: "Project imported", type: 'success' });
     } catch (err) {
       setNotification({ msg: (err as Error).message, type: 'error' });
@@ -275,16 +303,16 @@ const App: React.FC = () => {
   const handleJumpToToday = () => {
     if (!rightPaneRef.current) return;
     const bounds = getProjectBounds(tasks, zoomLevel);
-    const today = new Date();
-    today.setHours(0,0,0,0);
+    const todayDate = new Date();
+    todayDate.setHours(0,0,0,0);
     
     const pixelsPerDay = zoomLevel === ZoomLevel.DAYS ? 35 : zoomLevel === ZoomLevel.WEEKS ? 8 : 2.5;
-    const diffDays = (today.getTime() - bounds.start.getTime()) / (1000 * 60 * 60 * 24);
-    const todayX = Math.floor(diffDays * pixelsPerDay);
+    const diffDays = (todayDate.getTime() - bounds.start.getTime()) / (1000 * 60 * 60 * 24);
+    const todayXPos = Math.floor(diffDays * pixelsPerDay);
     
     const containerWidth = rightPaneRef.current.clientWidth;
     rightPaneRef.current.scrollTo({
-      left: todayX - containerWidth / 2,
+      left: todayXPos - containerWidth / 2,
       behavior: 'smooth'
     });
   };
@@ -470,10 +498,20 @@ const App: React.FC = () => {
     document.body.style.userSelect = 'none';
   }, [handleResize, stopResizing]);
 
-  // Updated header label class to be horizontal and truncate instead of rotating upside down
   const headerLabelClass = "w-full text-center p-2 truncate h-full flex items-center justify-center";
-
   const activeNotesTask = useMemo(() => tasks.find(t => t.id === activeNotesTaskId), [tasks, activeNotesTaskId]);
+
+  if (!currentProjectId) {
+    return (
+      <ProjectList 
+        projects={projects}
+        onCreateProject={handleCreateProject}
+        onOpenProject={handleOpenProject}
+        onDeleteProject={handleDeleteProject}
+        isDarkMode={isDarkMode}
+      />
+    );
+  }
 
   return (
     <div className={`flex flex-col h-screen overflow-hidden ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-white text-gray-900'}`}>
@@ -501,6 +539,7 @@ const App: React.FC = () => {
         zoomLevel={zoomLevel}
         onZoomChange={setZoomLevel}
         onJumpToToday={handleJumpToToday}
+        onBackToHome={() => setCurrentProjectId(null)}
       />
       <div className="flex-1 flex overflow-hidden border-t dark:border-slate-800">
         <div className="flex w-full overflow-hidden relative">
@@ -621,7 +660,6 @@ const App: React.FC = () => {
         </div>
       )}
       
-      {/* Persistent Notification System */}
       {notification && (
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-xl shadow-2xl z-[100] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 border ${
           notification.type === 'success' 

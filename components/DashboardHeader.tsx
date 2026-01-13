@@ -27,6 +27,7 @@ interface HeaderProps {
   zoomLevel: ZoomLevel;
   onZoomChange: (zoom: ZoomLevel) => void;
   onJumpToToday: () => void;
+  onBackToHome: () => void;
 }
 
 const DashboardHeader: React.FC<HeaderProps> = ({ 
@@ -52,7 +53,8 @@ const DashboardHeader: React.FC<HeaderProps> = ({
   onToggleCriticalPath,
   zoomLevel,
   onZoomChange,
-  onJumpToToday
+  onJumpToToday,
+  onBackToHome
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -82,6 +84,14 @@ const DashboardHeader: React.FC<HeaderProps> = ({
   return (
     <header className="bg-white dark:bg-slate-900 px-6 py-2.5 flex items-center justify-between shadow-sm z-30 border-b dark:border-slate-800 transition-colors duration-200">
       <div className="flex items-center gap-4 shrink-0">
+        <button 
+          onClick={onBackToHome}
+          className="w-9 h-9 flex items-center justify-center rounded-lg border dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-400 transition-colors"
+          title="Back to Projects"
+        >
+          <i className="fas fa-chevron-left text-sm"></i>
+        </button>
+
         <div className="relative group">
           <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
           <div className="relative bg-gradient-to-br from-blue-500 to-indigo-700 text-white w-9 h-9 flex items-center justify-center rounded-lg shadow-lg ring-1 ring-white/20">
@@ -192,7 +202,7 @@ const DashboardHeader: React.FC<HeaderProps> = ({
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[11px] font-bold transition-all shadow-sm active:scale-95 ${
               isSaving ? 'bg-gray-100 text-gray-400' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
             }`}
-            title="Save to Cloud"
+            title="Save Project"
           >
             {isSaving ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
             <span className="hidden lg:inline">Save</span>
