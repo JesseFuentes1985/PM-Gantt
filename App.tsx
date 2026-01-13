@@ -150,7 +150,8 @@ const App: React.FC = () => {
 
   const handleCreateProject = () => {
     const newId = `proj-${Date.now()}`;
-    saveProjectState(newId, identifyCriticalPath(rollupHierarchy(INITIAL_TASKS)), "New Project");
+    // Initialize with a blank Gantt as requested
+    saveProjectState(newId, [], "New Project");
     setProjects(getProjectsList());
     handleOpenProject(newId);
   };
@@ -509,6 +510,7 @@ const App: React.FC = () => {
         onOpenProject={handleOpenProject}
         onDeleteProject={handleDeleteProject}
         isDarkMode={isDarkMode}
+        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
       />
     );
   }
@@ -587,6 +589,17 @@ const App: React.FC = () => {
             
             <div ref={leftPaneRef} onScroll={onScroll} className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-white dark:bg-slate-900">
               <div className="w-full">
+                {visibleTasksData.length === 0 && !searchTerm && (
+                   <div className="p-12 text-center">
+                     <p className="text-sm text-slate-400 dark:text-slate-500 italic mb-6">No tasks in this project yet.</p>
+                     <button 
+                       onClick={() => handleAddTask(null, false, true)}
+                       className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg text-xs font-bold transition-all shadow-md"
+                     >
+                       <i className="fas fa-plus mr-2"></i> Add First Task
+                     </button>
+                   </div>
+                )}
                 {visibleTasksData.map(({ task, hierarchyId }, index) => (
                   <TaskRow 
                     key={task.id} 
@@ -617,7 +630,7 @@ const App: React.FC = () => {
                     isDarkMode={isDarkMode}
                   />
                 ))}
-                {!isSummaryMode && !searchTerm && (
+                {!isSummaryMode && !searchTerm && visibleTasksData.length > 0 && (
                    <div className={`p-3 flex items-center gap-2 text-gray-300 dark:text-slate-600 hover:text-blue-600 hover:bg-blue-50/20 dark:hover:bg-blue-900/10 cursor-pointer text-xs font-bold h-[36px] border-b border-dashed dark:border-slate-800 ${visibleTasksData.length % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50/50 dark:bg-slate-900/40'}`} onClick={() => handleAddTask(null, false, true)}>
                     <i className="fas fa-plus-circle ml-8"></i> Add Feature (PF)
                   </div>
